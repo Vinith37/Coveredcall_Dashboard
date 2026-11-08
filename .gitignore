@@ -1,0 +1,20 @@
+# Environment & Secrets
+.env
+kite_session.json
+
+# Local Runtime Cache
+cache_data.json
+stock_strength_cache.json
+
+# Python Bytecode & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# macOS / IDE
+.DS_Store
+.vscode/
+.idea/

@@ -6,8 +6,8 @@ BASE_DIR = Path(__file__).resolve().parent
 
 load_dotenv(BASE_DIR / ".env")
 
-KITE_API_KEY = os.getenv("KITE_API_KEY", "s2d17052i4lb0duz")
-KITE_API_SECRET = os.getenv("KITE_API_SECRET", "4keubds4jpt3j8hkojjjksz9ln0zv7o5")
+KITE_API_KEY = os.getenv("KITE_API_KEY", "")
+KITE_API_SECRET = os.getenv("KITE_API_SECRET", "")
 KITE_ACCESS_TOKEN = os.getenv("KITE_ACCESS_TOKEN", "")
 
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "900"))

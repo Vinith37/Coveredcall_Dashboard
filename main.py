@@ -1,8 +1,9 @@
 import os
 import uvicorn
+from urllib.parse import urlparse, parse_qs
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 
@@ -199,24 +200,46 @@ def get_kite_status():
     return JSONResponse(content=kite_service.get_status())
 
 
+def _extract_clean_token(raw: str) -> str:
+    """Extracts request_token if the user pasted a full redirect URL or query string."""
+    val = raw.strip()
+    if "request_token=" in val:
+        parsed = urlparse(val if "://" in val else f"http://localhost/?{val.lstrip('?')}")
+        qs = parse_qs(parsed.query)
+        if "request_token" in qs and qs["request_token"]:
+            return qs["request_token"][0].strip()
+    return val
+
+
 @app.post("/api/kite/session")
 def set_kite_session(req: KiteSessionRequest):
-    """Generates or stores Kite session using request_token or access_token."""
+    """Generates or stores Kite session using request_token, redirect URL, or access_token."""
     global CURRENT_ENGINE_MODE
-    if req.request_token:
-        res = kite_service.generate_session(req.request_token.strip())
-        if res.get("success"):
-            CURRENT_ENGINE_MODE = "kite"
-            return JSONResponse(content=res)
-        raise HTTPException(status_code=400, detail=res.get("error", "Failed to generate session"))
-    elif req.access_token:
-        res = kite_service.set_direct_access_token(req.access_token.strip())
-        if res.get("success"):
-            CURRENT_ENGINE_MODE = "kite"
-            return JSONResponse(content=res)
-        raise HTTPException(status_code=400, detail=res.get("error", "Invalid access token"))
-    else:
+    raw_token = req.request_token or req.access_token
+    if not raw_token or not raw_token.strip():
         raise HTTPException(status_code=400, detail="Either request_token or access_token must be provided")
+
+    clean_token = _extract_clean_token(raw_token)
+
+    if req.request_token:
+        res = kite_service.generate_session(clean_token)
+        if res.get("success"):
+            CURRENT_ENGINE_MODE = "kite"
+            return JSONResponse(content=res)
+
+        # Fallback: check if user pasted a direct access_token into the input box
+        direct_res = kite_service.set_direct_access_token(clean_token)
+        if direct_res.get("success"):
+            CURRENT_ENGINE_MODE = "kite"
+            return JSONResponse(content=direct_res)
+
+        raise HTTPException(status_code=400, detail=res.get("error", "Failed to generate Kite session"))
+
+    res = kite_service.set_direct_access_token(clean_token)
+    if res.get("success"):
+        CURRENT_ENGINE_MODE = "kite"
+        return JSONResponse(content=res)
+    raise HTTPException(status_code=400, detail=res.get("error", "Invalid access token"))
 
 
 @app.post("/api/kite/disconnect")
@@ -238,7 +261,20 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 @app.get("/")
-def serve_index():
+def serve_index(request_token: Optional[str] = None, status: Optional[str] = None):
+    """
+    Serves the main dashboard HTML.
+    If Zerodha Kite redirects back with ?request_token=...&status=success,
+    automatically exchanges the token on the server and redirects to /?kite_auth=success.
+    """
+    global CURRENT_ENGINE_MODE
+    if request_token and status == "success":
+        res = kite_service.generate_session(request_token.strip())
+        if res.get("success"):
+            CURRENT_ENGINE_MODE = "kite"
+            return RedirectResponse(url="/?kite_auth=success")
+        err_msg = res.get("error", "Token exchange failed")
+        return RedirectResponse(url=f"/?kite_auth=error&reason={err_msg}")
     return FileResponse(static_dir / "index.html")
 
 

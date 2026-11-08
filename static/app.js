@@ -74,6 +74,11 @@ const outlierPill = document.getElementById('outlier-alert-pill');
 // INITIALIZATION
 // =================================================================
 document.addEventListener('DOMContentLoaded', async () => {
+  initEventListeners();
+  initCanvas();
+
+  await checkUrlForKiteAuthToken();
+
   try {
     const modeRes = await fetch('/api/engine/mode');
     const modeData = await modeRes.json();
@@ -85,9 +90,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('Failed to load initial engine mode:', e);
   }
 
-  checkUrlForKiteAuthToken();
-  initEventListeners();
-  initCanvas();
   fetchData();
   initStockStrength();
 });
@@ -95,10 +97,27 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function checkUrlForKiteAuthToken() {
   try {
     const urlParams = new URLSearchParams(window.location.search);
+    const kiteAuth = urlParams.get('kite_auth');
     const reqToken = urlParams.get('request_token');
     const status = urlParams.get('status');
 
+    if (kiteAuth === 'success') {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      currentEngineMode = 'kite';
+      syncEngineModeUI('kite');
+      showToast('🎉 Connected to Zerodha Kite Connect (Live Mode Active)!');
+      return;
+    }
+
+    if (kiteAuth === 'error') {
+      const reason = urlParams.get('reason') || 'Token exchange failed';
+      window.history.replaceState({}, document.title, window.location.pathname);
+      showToast(`⚠️ Kite Auth Error: ${reason}`);
+      return;
+    }
+
     if (reqToken && status === 'success') {
+      window.history.replaceState({}, document.title, window.location.pathname);
       const res = await fetch('/api/kite/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -106,9 +125,12 @@ async function checkUrlForKiteAuthToken() {
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        currentEngineMode = 'kite';
+        syncEngineModeUI('kite');
         showToast(`🎉 Connected to Zerodha Kite as ${data.session?.user_name || 'User'}!`);
+      } else {
+        showToast(`⚠️ Kite Auth Error: ${data.detail || 'Token expired or invalid'}`);
       }
-      window.history.replaceState({}, document.title, window.location.pathname);
     }
   } catch (e) {
     console.error('Auto Kite auth check error:', e);

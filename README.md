@@ -57,9 +57,9 @@ To prevent burning Zerodha Kite Connect API quotas and rate limits (3 req/sec li
 
 ## 🔑 Configured Kite API Credentials
 
-Stored securely in [.env](file:///Users/vinithsai/Desktop/Kite/.env):
-- **API Key**: `s2d17052i4lb0duz`
-- **API Secret**: `4keubds4jpt3j8hkojjjksz9ln0zv7o5`
+Stored securely in `.env` (see `.env.example`):
+- `KITE_API_KEY`
+- `KITE_API_SECRET`
 
 To connect live Kite data:
 1. Click **Kite Connect** in the dashboard header.
