@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kite Pulse — Relative Strength & RRG Institutional Sector Engine</title>
+  <meta name="description" content="Lean institutional sector relative strength, momentum, and relative rotation graph (RRG) dashboard powered by Zerodha Kite Connect and Zero-Token caching.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css?v=20261108_v13">
+</head>
+<body class="dark-theme">
+  <!-- APP HEADER -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="brand-logo">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
+            <polyline points="16 7 22 7 22 13"></polyline>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>KITE <span>PULSE</span></h1>
+          <span class="brand-subtitle">Relative Strength & RRG Matrix</span>
+        </div>
+      </div>
+
+      <!-- MARKET REGIME BANNER -->
+      <div class="market-regime-card" id="market-regime-pill">
+        <div class="regime-indicator pulse-green"></div>
+        <div class="regime-info">
+          <span class="regime-title">NIFTY 50 REGIME</span>
+          <span class="regime-val" id="regime-nifty-val">--</span>
+        </div>
+        <div class="regime-status-badge" id="regime-badge">HEALTHY</div>
+      </div>
+    </div>
+
+    <!-- HEADER RIGHT CONTROLS -->
+    <div class="header-right">
+      <!-- ENGINE MODE TOGGLE SWITCH -->
+      <div class="engine-toggle-container" title="Switch data engine between Free Yahoo Finance and Zerodha Kite Connect Live Quotes">
+        <div class="engine-switch" id="engine-mode-switch" role="group" aria-label="Data Feed Engine">
+          <button type="button" class="engine-opt-btn active" id="btn-mode-yfinance" data-mode="yfinance" title="Free Yahoo Finance (0 Tokens)">
+            <span class="engine-opt-icon">⚡</span>
+            <span class="engine-opt-name">yfinance</span>
+          </button>
+          <button type="button" class="engine-opt-btn" id="btn-mode-kite" data-mode="kite" title="Zerodha Kite Connect Real-Time API">
+            <span class="engine-opt-icon">🪁</span>
+            <span class="engine-opt-name">Kite API</span>
+          </button>
+          <div class="engine-switch-thumb"></div>
+        </div>
+      </div>
+
+      <!-- TOKEN UTILIZATION PILL -->
+      <div class="token-meter-pill" title="Optimized caching prevents repeated API hits and preserves quota">
+        <div class="token-meter-icon" id="token-meter-icon">⚡</div>
+        <div class="token-meter-info">
+          <span class="token-count" id="token-count-display">0 Kite Tokens</span>
+          <span class="cache-timer" id="cache-timer-display">Cache: Active (15m)</span>
+        </div>
+      </div>
+
+      <!-- DATA SOURCE BADGE -->
+      <div class="source-badge" id="source-badge">
+        <span class="dot"></span>
+        <span id="source-name">Zero-Token Engine</span>
+      </div>
+
+      <!-- REFRESH BUTTON -->
+      <button class="btn btn-outline" id="btn-refresh" title="Force calculate fresh data">
+        <svg class="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+        </svg>
+        <span>Refresh</span>
+      </button>
+
+      <!-- KITE CONNECT MODAL BUTTON -->
+      <button class="btn btn-primary" id="btn-open-kite" title="Configure Zerodha Kite Connect API">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <span id="kite-btn-text">Kite Connect</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN APP CONTAINER -->
+  <main class="main-content">
+
+    <!-- KPI STATS STRIP -->
+    <section class="kpi-strip">
+      <div class="kpi-card">
+        <div class="kpi-label">Benchmark Nifty 50</div>
+        <div class="kpi-val" id="kpi-nifty-price">--</div>
+        <div class="kpi-sub" id="kpi-nifty-sma">SMA50: --</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">Leading Sectors</div>
+        <div class="kpi-val text-emerald" id="kpi-leading-count">0</div>
+        <div class="kpi-sub">In Top-Right RRG Quadrant</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">Improving / Accelerating</div>
+        <div class="kpi-val text-cyan" id="kpi-improving-count">0</div>
+        <div class="kpi-sub">Bottom-Left to Top-Left rotation</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">50-Day Breakouts</div>
+        <div class="kpi-val text-amber" id="kpi-breakouts-count">0</div>
+        <div class="kpi-sub">At or above 50-day peak</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">Heavy Accumulation</div>
+        <div class="kpi-val text-purple" id="kpi-accumulation-count">0</div>
+        <div class="kpi-sub">RVOL > 1.5 + Upward Price</div>
+      </div>
+    </section>
+
+    <!-- NAVIGATION TABS -->
+    <nav class="view-tabs-nav">
+      <div class="tabs-list">
+        <button class="tab-btn active" data-tab="tab-rrg">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2v20M2 12h20"></path></svg>
+          <span>Relative Rotation Graph (RRG)</span>
+        </button>
+        <button class="tab-btn" data-tab="tab-strength">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+          <span>Sector Strength Matrix</span>
+        </button>
+        <button class="tab-btn" data-tab="tab-stock-strength">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>
+          <span>Stock Strength Screener</span>
+          <span class="tab-pill-badge">200+</span>
+        </button>
+      </div>
+
+      <!-- TIMEFRAME & CONTROLS -->
+      <div class="tab-actions">
+        <div class="segmented-control" id="timeframe-control">
+          <button class="segment-btn active" data-tf="daily">Daily RRG</button>
+          <button class="segment-btn" data-tf="weekly">Weekly RRG</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- TAB 1: RRG VIEW -->
+    <section class="tab-pane active" id="tab-rrg">
+      <div class="rrg-layout">
+        <!-- CANVAS CONTAINER -->
+        <div class="rrg-chart-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h2>RRG Visualizer <span class="badge-timeframe" id="rrg-tf-badge">DAILY</span></h2>
+              <span class="panel-subtitle">Julius de Kempenaer Enhanced EMA Model (14-EMA, 10-ROC, Trailing Tails)</span>
+            </div>
+            
+            <!-- Quadrant Filter Pills -->
+            <div class="quadrant-filter-pills">
+              <button class="filter-pill active" data-q="ALL">All Quadrants</button>
+              <button class="filter-pill text-emerald" data-q="LEADING">● Leading</button>
+              <button class="filter-pill text-cyan" data-q="IMPROVING">● Improving</button>
+              <button class="filter-pill text-amber" data-q="WEAKENING">● Weakening</button>
+              <button class="filter-pill text-rose" data-q="LAGGING">● Lagging</button>
+            </div>
+          </div>
+
+          <!-- VISUALIZER CONTROLS TOOLBAR -->
+          <div class="chart-controls-toolbar">
+            <!-- Chart Style -->
+            <div class="control-btn-group">
+              <span class="control-group-label">Style:</span>
+              <button class="ctrl-btn active" id="btn-style-pulse" data-style="PULSE" title="Dark Pulse theme">🌙 Pulse</button>
+              <button class="ctrl-btn" id="btn-style-sc" data-style="SC" title="StockCharts.com-style Relative Rotation Graph">📈 StockCharts</button>
+            </div>
+
+            <!-- Focus & Outlier mode -->
+            <div class="control-btn-group">
+              <span class="control-group-label">Focus View:</span>
+              <button class="ctrl-btn active" id="btn-focus-cluster" title="Zoom in on the main cluster of sectors so they do not overlap">
+                <span>🎯 Focus Core Cluster</span>
+              </button>
+              <button class="ctrl-btn" id="btn-fit-all" title="Fit all sectors including distant outliers">
+                <span>🌐 Fit All (Outliers)</span>
+              </button>
+            </div>
+
+            <!-- Label Density -->
+            <div class="control-btn-group">
+              <span class="control-group-label">Labels:</span>
+              <button class="ctrl-btn active" id="btn-labels-staggered" title="Anti-collision staggered labels with leader lines">Staggered</button>
+              <button class="ctrl-btn" id="btn-labels-leaders" title="Show top movers only">Key Leaders</button>
+              <button class="ctrl-btn" id="btn-labels-hover" title="Show label only when hovered or clicked">Hover Only</button>
+            </div>
+
+            <!-- Tail Length -->
+            <div class="control-btn-group">
+              <span class="control-group-label">Tails:</span>
+              <button class="ctrl-btn active" id="btn-tail-8" data-tails="8">8 Tails</button>
+              <button class="ctrl-btn" id="btn-tail-4" data-tails="4">4 Tails</button>
+              <button class="ctrl-btn" id="btn-tail-0" data-tails="0">Dots Only</button>
+            </div>
+
+            <!-- Zoom Controls -->
+            <div class="zoom-actions">
+              <button class="zoom-btn" id="btn-zoom-in" title="Zoom in">+</button>
+              <span class="zoom-badge" id="zoom-level-text">100%</span>
+              <button class="zoom-btn" id="btn-zoom-out" title="Zoom out">&minus;</button>
+              <button class="zoom-btn" id="btn-zoom-reset" title="Reset view">⟲ Reset</button>
+            </div>
+          </div>
+
+          <!-- SECTOR QUICK HIGHLIGHT CHIPS BAR -->
+          <div class="sector-chips-bar" id="sector-chips-bar">
+            <button class="sector-chip active" data-symbol="ALL">⭐ All Sectors</button>
+            <!-- Sector chips dynamically populated -->
+          </div>
+
+          <!-- CANVAS WRAPPER -->
+          <div class="canvas-wrapper" id="canvas-wrapper">
+            <canvas id="rrg-canvas"></canvas>
+            
+            <!-- Canvas Floating Spotlight Card -->
+            <div id="sector-spotlight-card" class="sector-spotlight-card" style="display: none;">
+              <div class="spotlight-header">
+                <div>
+                  <span class="spotlight-title" id="spotlight-name">Nifty IT</span>
+                  <span class="spotlight-ticker" id="spotlight-ticker">^CNXIT</span>
+                </div>
+                <button class="spotlight-close" id="btn-close-spotlight">&times;</button>
+              </div>
+              <div class="spotlight-badge" id="spotlight-quadrant">LEADING</div>
+              <div class="spotlight-grid">
+                <div><span>RS-Ratio:</span> <strong id="spotlight-ratio">104.05</strong></div>
+                <div><span>RS-Mom:</span> <strong id="spotlight-mom">103.94</strong></div>
+                <div><span>Heading:</span> <strong id="spotlight-direction">↗ ACCELERATING</strong></div>
+                <div><span>Distance:</span> <strong id="spotlight-dist">5.65</strong></div>
+              </div>
+            </div>
+
+            <!-- Outlier Notice Pill -->
+            <div id="outlier-alert-pill" class="outlier-alert-pill" style="display: none;">
+              <span>📍 <span id="outlier-count-text">1 sector</span> beyond core 1:1 view: <strong id="outlier-names">Media</strong></span>
+              <button id="btn-toggle-outlier-fit">Fit Outlier</button>
+            </div>
+
+            <!-- Zoom Instructions Hint -->
+            <div class="canvas-hint-overlay">
+              <span>Aspect Ratio: Locked 1:1 Square &bull; Click [+] [−] or Drag to Pan &bull; Click Sector to Solo</span>
+            </div>
+
+            <div id="rrg-tooltip" class="rrg-tooltip" style="display: none;"></div>
+          </div>
+
+          <!-- TAIL / ANIMATE / BENCHMARK PANEL (always visible) -->
+          <div class="sc-panel" id="sc-panel">
+            <div class="sc-controls">
+              <button class="ctrl-btn" id="btn-sc-animate" title="Replay the rotation through time">▶ Animate</button>
+              <label class="sc-tail-wrap" for="sc-tail-slider">
+                <span class="control-group-label">Tail Length</span>
+                <input type="range" id="sc-tail-slider" min="0" max="20" value="8">
+                <span class="sc-tail-label" id="sc-tail-label">8 days</span>
+              </label>
+              <button class="ctrl-btn" id="btn-sc-latest" title="Jump to the latest bar">⏭ Latest</button>
+              <span class="sc-bench-title">Nifty 50 (Benchmark) &mdash; click or drag to scrub the end date</span>
+            </div>
+            <canvas id="sc-bench-canvas" class="sc-bench-canvas"></canvas>
+            <div class="sc-caption" id="sc-caption">5 days ending --</div>
+          </div>
+
+          <!-- CHART FOOTER LEGEND -->
+          <div class="chart-footer-legend">
+            <div class="legend-item"><span class="legend-dot bg-emerald"></span> <strong>LEADING</strong> (RS-Ratio &gt; 100, RS-Mom &gt; 100)</div>
+            <div class="legend-item"><span class="legend-dot bg-amber"></span> <strong>WEAKENING</strong> (RS-Ratio &gt; 100, RS-Mom &le; 100)</div>
+            <div class="legend-item"><span class="legend-dot bg-rose"></span> <strong>LAGGING</strong> (RS-Ratio &le; 100, RS-Mom &le; 100)</div>
+            <div class="legend-item"><span class="legend-dot bg-cyan"></span> <strong>IMPROVING</strong> (RS-Ratio &le; 100, RS-Mom &gt; 100)</div>
+          </div>
+        </div>
+
+        <!-- RRG DATA TABLE SIDEBAR -->
+        <div class="rrg-table-panel">
+          <div class="panel-header">
+            <div class="panel-title-group">
+              <h3>RRG Sector Rankings</h3>
+              <span class="panel-subtitle">Ordered by Quadrant & Distance</span>
+            </div>
+          </div>
+          <div class="table-scroll-container">
+            <table class="data-table" id="table-rrg">
+              <thead>
+                <tr>
+                  <th>Sector</th>
+                  <th>RS-Ratio</th>
+                  <th>RS-Mom</th>
+                  <th>Quadrant</th>
+                  <th>Direction</th>
+                  <th>Distance</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-rrg">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: STRENGTH INDICATORS MATRIX -->
+    <section class="tab-pane" id="tab-strength">
+      <div class="strength-layout">
+        <!-- FILTER BAR -->
+        <div class="matrix-filter-bar">
+          <div class="filter-search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="strength-search" placeholder="Search sectors or tickers..." autocomplete="off">
+          </div>
+
+          <div class="filter-dropdowns">
+            <div class="filter-group">
+              <label>Trend Signal:</label>
+              <select id="filter-trend">
+                <option value="ALL">All Trends</option>
+                <option value="GREEN">Green (Bullish)</option>
+                <option value="YELLOW">Yellow (Moderate)</option>
+                <option value="RED">Red (Bearish)</option>
+                <option value="MARKET_WEAK">Market Weak</option>
+                <option value="HIGH_VOLATILITY">High Volatility</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>RS Signal:</label>
+              <select id="filter-rs-signal">
+                <option value="ALL">All Signals</option>
+                <option value="LEADER">Leader (&ge; 1.30)</option>
+                <option value="STRONG">Strong (&ge; 1.10)</option>
+                <option value="NEUTRAL">Neutral (&ge; 1.00)</option>
+                <option value="WEAK">Weak (&lt; 1.00)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="matrix-counter" id="matrix-counter">Showing 19 sectors</div>
+        </div>
+
+        <!-- FULL TABLE -->
+        <div class="table-card">
+          <div class="table-scroll-container full-height">
+            <table class="data-table full-table" id="table-strength">
+              <thead>
+                <tr>
+                  <th data-sort="name">Ticker / Sector</th>
+                  <th data-sort="price" class="num">Price (₹)</th>
+                  <th data-sort="sma20" class="num">SMA 20</th>
+                  <th data-sort="sma50" class="num">SMA 50</th>
+                  <th data-sort="sma200" class="num">SMA 200</th>
+                  <th data-sort="trend">Trend Signal</th>
+                  <th data-sort="rs_score" class="num">RS Value</th>
+                  <th data-sort="rs_rating" class="num">RS Rating</th>
+                  <th data-sort="rs_signal">RS Signal</th>
+                  <th data-sort="rvol" class="num">RVOL</th>
+                  <th data-sort="breakout">50D Breakout</th>
+                  <th data-sort="accumulation">Accumulation</th>
+                  <th data-sort="score" class="num">Momentum</th>
+                  <th data-sort="volatility" class="num">Volatility %</th>
+                  <th data-sort="last_updated">Updated</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-strength">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: STOCK STRENGTH INDICATOR MATRIX (200+ STOCKS) -->
+    <section class="tab-pane" id="tab-stock-strength">
+      <div class="stock-strength-layout">
+        <!-- TOP SUMMARY KPI BAR -->
+        <div class="stock-kpi-bar">
+          <div class="stock-kpi-card">
+            <div class="kpi-label">Market Regime</div>
+            <div class="kpi-val" id="stock-kpi-regime">HEALTHY</div>
+            <div class="kpi-sub" id="stock-kpi-nifty">Nifty &gt; 50-DMA</div>
+          </div>
+          <div class="stock-kpi-card highlight-green">
+            <div class="kpi-label">RS Leaders (&ge; 1.30)</div>
+            <div class="kpi-val text-emerald" id="stock-kpi-leaders">0</div>
+            <div class="kpi-sub">Outperforming Market</div>
+          </div>
+          <div class="stock-kpi-card highlight-cyan">
+            <div class="kpi-label">50D Breakouts</div>
+            <div class="kpi-val text-cyan" id="stock-kpi-breakouts">0</div>
+            <div class="kpi-sub">At 50-Day Highs</div>
+          </div>
+          <div class="stock-kpi-card highlight-violet">
+            <div class="kpi-label">Accumulation Setups</div>
+            <div class="kpi-val text-violet" id="stock-kpi-accum">0</div>
+            <div class="kpi-sub">RVOL &gt; 1.5x + &gt; SMA20</div>
+          </div>
+          <div class="stock-kpi-card highlight-amber">
+            <div class="kpi-label">Top Momentum (Score &ge; 4)</div>
+            <div class="kpi-val text-amber" id="stock-kpi-momentum">0</div>
+            <div class="kpi-sub">Multi-Factor Bullish</div>
+          </div>
+          <div class="stock-kpi-card">
+            <div class="kpi-label">Tracked Universe</div>
+            <div class="kpi-val text-white" id="stock-kpi-total">205</div>
+            <div class="kpi-sub">NSE Major Tickers</div>
+          </div>
+        </div>
+
+        <!-- FILTER & ACTION TOOLBAR -->
+        <div class="stock-toolbar-card">
+          <div class="stock-search-wrap">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="stock-search-input" placeholder="Search by ticker (e.g. RELIANCE, TATAMOTORS, HDFCBANK)..." autocomplete="off">
+            <button class="clear-search-btn" id="btn-clear-stock-search" title="Clear search" style="display:none;">&times;</button>
+          </div>
+
+          <div class="stock-filter-group">
+            <label>Trend:</label>
+            <select id="stock-filter-trend">
+              <option value="ALL">All Trends</option>
+              <option value="GREEN">Green (Bullish)</option>
+              <option value="YELLOW">Yellow (Pullback/Support)</option>
+              <option value="RED">Red (Lagging)</option>
+              <option value="HIGH_VOLATILITY">High Volatility (&gt;35%)</option>
+              <option value="MARKET_WEAK">Market Weak</option>
+            </select>
+          </div>
+
+          <div class="stock-filter-group">
+            <label>RS Signal:</label>
+            <select id="stock-filter-rs-signal">
+              <option value="ALL">All RS Signals</option>
+              <option value="LEADER">Leader (&ge; 1.30)</option>
+              <option value="STRONG">Strong (&ge; 1.10)</option>
+              <option value="NEUTRAL">Neutral (&ge; 1.00)</option>
+              <option value="WEAK">Weak (&lt; 1.00)</option>
+            </select>
+          </div>
+
+          <div class="stock-pills-wrap">
+            <button class="stock-pill active" data-filter="all">All</button>
+            <button class="stock-pill" data-filter="score5">Score 5/5</button>
+            <button class="stock-pill" data-filter="breakout">Breakout</button>
+            <button class="stock-pill" data-filter="accumulation">Accumulation</button>
+            <button class="stock-pill" data-filter="leaders">Leaders/Strong</button>
+          </div>
+
+          <div class="stock-actions-wrap">
+            <span class="stock-counter" id="stock-match-counter">Showing 205 stocks</span>
+            <button class="btn btn-sm btn-outline" id="btn-export-stock-csv" title="Export exact Google Sheet CSV">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>Export CSV</span>
+            </button>
+            <button class="btn btn-sm btn-outline" id="btn-refresh-stock" title="Force Refresh Stock Data">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 17-COLUMN DATA TABLE MATCHING GOOGLE SHEET -->
+        <div class="table-card stock-table-card">
+          <div class="table-scroll-container full-height" id="stock-table-scroll">
+            <table class="data-table stock-table" id="table-stock-strength">
+              <thead>
+                <tr>
+                  <th data-sort="ticker">Ticker</th>
+                  <th data-sort="price" class="num">Price (₹)</th>
+                  <th data-sort="last_updated">Updated</th>
+                  <th data-sort="sma20" class="num">SMA 20</th>
+                  <th data-sort="sma50" class="num">SMA 50</th>
+                  <th data-sort="sma200" class="num">SMA 200</th>
+                  <th data-sort="trend">Trend Signal</th>
+                  <th data-sort="rs_score" class="num">RS Value</th>
+                  <th data-sort="rs_rating" class="num">RS Rating</th>
+                  <th data-sort="rs_signal">RS Signal</th>
+                  <th data-sort="vol_today" class="num">Vol Today</th>
+                  <th data-sort="vol20" class="num">Vol 20</th>
+                  <th data-sort="rvol" class="num">RVOL</th>
+                  <th data-sort="breakout">50D Breakout</th>
+                  <th data-sort="accumulation">Accumulation</th>
+                  <th data-sort="score" class="num">Momentum</th>
+                  <th data-sort="volatility" class="num">Volatility %</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-stock-strength">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- KITE CONNECT CONFIGURATION DRAWER / MODAL -->
+  <div class="modal-backdrop" id="kite-modal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-badge-kite">Zerodha Kite Connect</div>
+          <h3>API Credentials & Session Hub</h3>
+        </div>
+        <button class="btn-close" id="btn-close-kite">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="token-efficiency-notice">
+          <div class="notice-icon">🛡️</div>
+          <div class="notice-text">
+            <strong>Ultra-Lean Token Preservation Active:</strong>
+            <p>Our intelligent engine caches 18-month daily and 3-year weekly calculations locally with a 15-minute TTL. Live quotes are fetched in a single batched call, using <strong>0 excess tokens</strong> and preventing rate-limit blocks.</p>
+          </div>
+        </div>
+
+        <!-- CREDENTIALS DISPLAY -->
+        <div class="form-group">
+          <label>Configured Kite API Key</label>
+          <div class="key-field">
+            <input type="text" id="modal-api-key" value="s2d17052i4lb0duz" readonly>
+            <span class="field-tag">Active in .env</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Configured Kite API Secret</label>
+          <div class="key-field">
+            <input type="password" id="modal-api-secret" value="••••••••••••••••••••••••••••••••" readonly>
+            <span class="field-tag">Secured</span>
+          </div>
+        </div>
+
+        <!-- SESSION STATUS -->
+        <div class="session-status-card" id="session-status-box">
+          <div class="status-header">
+            <span>Session Status:</span>
+            <span class="status-indicator" id="kite-session-status">Checking...</span>
+          </div>
+          <div class="status-details" id="kite-session-details">
+            Free Zero-Token Engine active. Authenticate with Kite to enable live tick quotes.
+          </div>
+        </div>
+
+        <!-- AUTH STEP 1: LOGIN -->
+        <div class="auth-step-box">
+          <div class="step-num">1</div>
+          <div class="step-content">
+            <h4>Login to Zerodha Kite</h4>
+            <p>Click below to login on Kite. You will be redirected to your app's redirect URL with a <code>request_token</code>.</p>
+            <a href="#" id="kite-login-link" target="_blank" class="btn btn-primary btn-sm">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+              <span>Open Kite Login Page</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- AUTH STEP 2: PASTE TOKEN -->
+        <div class="auth-step-box">
+          <div class="step-num">2</div>
+          <div class="step-content">
+            <h4>Enter Request Token or Access Token</h4>
+            <p>Paste the <code>request_token</code> from your browser address bar after logging in, or your direct <code>access_token</code>:</p>
+            <div class="input-action-group">
+              <input type="text" id="input-request-token" placeholder="e.g. 849a0f44b20756318..." autocomplete="off">
+              <button class="btn btn-emerald" id="btn-submit-token">Authorize</button>
+            </div>
+            <div class="auth-feedback" id="auth-feedback"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-danger-outline" id="btn-disconnect-kite">Disconnect Kite (Use Free Mode)</button>
+        <button class="btn btn-outline" id="btn-done-kite">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=20261108_v13"></script>
+</body>
+</html>
