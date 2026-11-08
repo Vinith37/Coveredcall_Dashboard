@@ -1,11 +1,13 @@
+import os
 import json
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
+from dotenv import load_dotenv
 from kiteconnect import KiteConnect
+from kiteconnect.exceptions import TokenException
 from config import (
-    KITE_API_KEY,
-    KITE_API_SECRET,
+    BASE_DIR,
     SESSION_FILE,
     SECTORS,
     NIFTY_KITE_SYMBOL,
@@ -14,35 +16,65 @@ from config import (
 
 class KiteService:
     def __init__(self):
-        self.api_key = KITE_API_KEY
-        self.api_secret = KITE_API_SECRET
+        self.api_key = ""
+        self.api_secret = ""
         self.access_token = None
+        self.last_request_token = None
         self.kite = None
         self.session_info = {}
+        self._refresh_credentials()
         self._load_saved_session()
+
+    def _refresh_credentials(self):
+        """Reloads .env so any updates to KITE_API_KEY / KITE_API_SECRET take effect immediately."""
+        load_dotenv(BASE_DIR / ".env", override=True)
+        self.api_key = os.getenv("KITE_API_KEY", "").strip()
+        self.api_secret = os.getenv("KITE_API_SECRET", "").strip()
 
     def get_login_url(self) -> str:
         """Returns the official Kite Connect login URL."""
+        self._refresh_credentials()
         return f"https://kite.zerodha.com/connect/login?v=3&api_key={self.api_key}"
 
+    def _clear_session_state(self):
+        self.access_token = None
+        self.kite = None
+        self.session_info = {}
+
     def _load_saved_session(self):
-        """Loads saved access token from kite_session.json if valid for today."""
+        """Loads saved access token from kite_session.json (or .env) if valid."""
+        self._refresh_credentials()
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
         if SESSION_FILE.exists():
             try:
                 with open(SESSION_FILE, "r") as f:
                     data = json.load(f)
                 token = data.get("access_token")
                 token_date = data.get("date")
-                today_str = datetime.now().strftime("%Y-%m-%d")
 
-                # Kite tokens expire daily around 6 AM IST
                 if token and token_date == today_str:
-                    self.access_token = token
-                    self.kite = KiteConnect(api_key=self.api_key)
-                    self.kite.set_access_token(self.access_token)
-                    self.session_info = data
+                    kite = KiteConnect(api_key=self.api_key)
+                    kite.set_access_token(token)
+                    try:
+                        profile = kite.profile()
+                        self.access_token = token
+                        self.kite = kite
+                        self.session_info = {
+                            **data,
+                            "user_name": profile.get("user_name") or data.get("user_name"),
+                            "user_id": profile.get("user_id") or data.get("user_id"),
+                        }
+                        return
+                    except Exception as e:
+                        print("Saved Kite session token is no longer valid:", e)
+                        self._clear_session_state()
             except Exception as e:
                 print("Could not load Kite session:", e)
+
+        env_token = os.getenv("KITE_ACCESS_TOKEN", "").strip()
+        if env_token:
+            self.set_direct_access_token(env_token)
 
     def _save_session(self, save_data: Dict[str, Any]):
         self.session_info = save_data
@@ -51,10 +83,27 @@ class KiteService:
 
     def generate_session(self, request_token: str) -> Dict[str, Any]:
         """Exchanges request_token from Kite redirect URL for a daily access_token."""
+        self._refresh_credentials()
+        clean_req_token = request_token.strip()
+
+        # If this exact request_token was just exchanged (e.g. via auto-redirect), return existing session
+        if (
+            clean_req_token
+            and clean_req_token == self.last_request_token
+            and self.kite
+            and self.access_token
+        ):
+            return {
+                "success": True,
+                "message": f"Kite session active for {self.session_info.get('user_name', 'User')}",
+                "session": self.session_info,
+            }
+
         try:
             kite = KiteConnect(api_key=self.api_key)
-            session_data = kite.generate_session(request_token, api_secret=self.api_secret)
+            session_data = kite.generate_session(clean_req_token, api_secret=self.api_secret)
             self.access_token = session_data["access_token"]
+            self.last_request_token = clean_req_token
             self.kite = kite
             self.kite.set_access_token(self.access_token)
 
@@ -79,15 +128,17 @@ class KiteService:
 
     def set_direct_access_token(self, access_token: str) -> Dict[str, Any]:
         """Allows direct entry of an existing access token."""
+        self._refresh_credentials()
+        clean_token = access_token.strip()
         try:
             kite = KiteConnect(api_key=self.api_key)
-            kite.set_access_token(access_token)
+            kite.set_access_token(clean_token)
             profile = kite.profile()
 
-            self.access_token = access_token
+            self.access_token = clean_token
             self.kite = kite
             save_data = {
-                "access_token": access_token,
+                "access_token": clean_token,
                 "user_name": profile.get("user_name"),
                 "user_id": profile.get("user_id"),
                 "email": profile.get("email"),
@@ -99,12 +150,14 @@ class KiteService:
                 "success": True,
                 "message": f"Connected to Kite as {profile.get('user_name')}",
                 "profile": profile,
+                "session": save_data,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     def get_status(self) -> Dict[str, Any]:
         """Returns Kite connection status."""
+        self._refresh_credentials()
         is_connected = bool(self.kite and self.access_token)
         return {
             "is_connected": is_connected,
@@ -124,6 +177,10 @@ class KiteService:
         try:
             quotes = self.kite.quote(symbols)
             return {sym: data.get("last_price", 0.0) for sym, data in quotes.items()}
+        except TokenException as te:
+            print("Kite token expired or invalid during quote fetch:", te)
+            self._clear_session_state()
+            return None
         except Exception as e:
             print("Kite live quote error:", e)
             return None

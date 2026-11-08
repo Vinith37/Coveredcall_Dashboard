@@ -1,6 +1,6 @@
 import os
 import uvicorn
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
@@ -37,7 +37,7 @@ class EngineModeRequest(BaseModel):
     mode: str  # 'yfinance' or 'kite'
 
 
-CURRENT_ENGINE_MODE = "yfinance"
+CURRENT_ENGINE_MODE = "kite" if kite_service.get_status().get("is_connected") else "yfinance"
 
 
 def _resolve_mode(mode: Optional[str]) -> str:
@@ -200,6 +200,12 @@ def get_kite_status():
     return JSONResponse(content=kite_service.get_status())
 
 
+@app.get("/api/kite/login")
+def redirect_to_kite_login():
+    """Redirects browser directly to the official Zerodha Kite Connect login URL."""
+    return RedirectResponse(url=kite_service.get_login_url())
+
+
 def _extract_clean_token(raw: str) -> str:
     """Extracts request_token if the user pasted a full redirect URL or query string."""
     val = raw.strip()
@@ -248,9 +254,7 @@ def disconnect_kite():
     global CURRENT_ENGINE_MODE
     if SESSION_FILE.exists():
         SESSION_FILE.unlink()
-    kite_service.access_token = None
-    kite_service.kite = None
-    kite_service.session_info = {}
+    kite_service._clear_session_state()
     CURRENT_ENGINE_MODE = "yfinance"
     return JSONResponse(content={"success": True, "message": "Disconnected from Kite. Switched to Zero-Token Yahoo Engine."})
 
@@ -268,12 +272,12 @@ def serve_index(request_token: Optional[str] = None, status: Optional[str] = Non
     automatically exchanges the token on the server and redirects to /?kite_auth=success.
     """
     global CURRENT_ENGINE_MODE
-    if request_token and status == "success":
+    if request_token and (not status or status.lower() == "success"):
         res = kite_service.generate_session(request_token.strip())
         if res.get("success"):
             CURRENT_ENGINE_MODE = "kite"
             return RedirectResponse(url="/?kite_auth=success")
-        err_msg = res.get("error", "Token exchange failed")
+        err_msg = quote(str(res.get("error", "Token exchange failed")))
         return RedirectResponse(url=f"/?kite_auth=error&reason={err_msg}")
     return FileResponse(static_dir / "index.html")
 

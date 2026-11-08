@@ -1597,35 +1597,75 @@ function renderStrengthTable() {
 // =================================================================
 // KITE CONNECT MODAL & CREDENTIALS
 // =================================================================
-async function openKiteModal() {
-  const modal = document.getElementById('kite-modal');
-  if (modal) modal.style.display = 'flex';
+let kiteModalPollTimer = null;
+
+async function refreshKiteModalStatus(autoSwitchOnConnect = false) {
+  const loginLink = document.getElementById('kite-login-link');
+  const statusText = document.getElementById('kite-session-status');
+  const details = document.getElementById('kite-session-details');
 
   try {
     const res = await fetch('/api/kite/status');
     const status = await res.json();
 
-    document.getElementById('modal-api-key').value = status.raw_api_key || '';
-    document.getElementById('kite-login-link').href = status.login_url;
-
-    const statusText = document.getElementById('kite-session-status');
-    const details = document.getElementById('kite-session-details');
+    const apiKeyInput = document.getElementById('modal-api-key');
+    if (apiKeyInput) apiKeyInput.value = status.raw_api_key || '';
+    if (loginLink) loginLink.href = status.login_url || '/api/kite/login';
 
     if (status.is_connected) {
-      statusText.textContent = 'CONNECTED';
-      statusText.style.color = 'var(--emerald)';
-      details.innerHTML = `Connected as <strong>${status.user_name || status.user_id}</strong> (Session Date: ${status.session_date}). Live quotes enabled.`;
+      if (statusText) {
+        statusText.textContent = 'CONNECTED';
+        statusText.style.color = 'var(--emerald)';
+      }
+      if (details) {
+        details.innerHTML = `Connected as <strong>${status.user_name || status.user_id}</strong> (Session Date: ${status.session_date}). Live quotes enabled.`;
+      }
+      if (autoSwitchOnConnect && currentEngineMode !== 'kite') {
+        currentEngineMode = 'kite';
+        syncEngineModeUI('kite');
+        showToast(`🎉 Connected to Zerodha Kite as ${status.user_name || status.user_id || 'User'}!`);
+        fetchData(false);
+        if (stockStrengthData) fetchStockStrengthData(false);
+      }
     } else {
-      statusText.textContent = 'ZERO-TOKEN MODE (OFFLINE)';
-      statusText.style.color = 'var(--cyan)';
-      details.textContent = 'Free Zero-Token Engine active with 15-minute local cache. Log in to Kite to stream live quotes.';
+      if (statusText) {
+        statusText.textContent = 'ZERO-TOKEN MODE (OFFLINE)';
+        statusText.style.color = 'var(--cyan)';
+      }
+      if (details) {
+        details.textContent = 'Free Zero-Token Engine active with 15-minute local cache. Log in to Kite to stream live quotes.';
+      }
     }
   } catch (e) {
     console.error('Failed to get Kite status:', e);
+    if (loginLink) loginLink.href = '/api/kite/login';
+    if (statusText) {
+      statusText.textContent = 'SERVER UNREACHABLE';
+      statusText.style.color = 'var(--rose)';
+    }
+    if (details) {
+      details.textContent = 'Could not reach local backend. Ensure server is running at http://127.0.0.1:8000.';
+    }
   }
 }
 
+async function openKiteModal() {
+  const modal = document.getElementById('kite-modal');
+  if (modal) modal.style.display = 'flex';
+
+  await refreshKiteModalStatus(false);
+
+  if (kiteModalPollTimer) clearInterval(kiteModalPollTimer);
+  kiteModalPollTimer = setInterval(() => {
+    refreshKiteModalStatus(true);
+  }, 2000);
+}
+
 function closeKiteModal() {
+  if (kiteModalPollTimer) {
+    clearInterval(kiteModalPollTimer);
+    kiteModalPollTimer = null;
+  }
   document.getElementById('kite-modal').style.display = 'none';
   document.getElementById('auth-feedback').textContent = '';
 }
