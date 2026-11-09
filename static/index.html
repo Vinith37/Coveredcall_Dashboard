@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=20261108_v13">
+  <link rel="stylesheet" href="/static/style.css?v=20261108_v16">
 </head>
 <body class="dark-theme">
   <!-- APP HEADER -->
@@ -140,6 +140,11 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>
           <span>Stock Strength Screener</span>
           <span class="tab-pill-badge">200+</span>
+        </button>
+        <button class="tab-btn" data-tab="tab-library" id="tab-btn-library">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+          <span>Trade Library</span>
+          <span class="tab-pill-badge" id="library-count-badge">0</span>
         </button>
       </div>
 
@@ -347,6 +352,9 @@
                 <option value="WEAK">Weak (&lt; 1.00)</option>
               </select>
             </div>
+            <button class="btn-clear-all-filters" id="btn-clear-sector-col-filters" title="Clear all Excel column filters">
+              <span>✕ Clear Column Filters</span>
+            </button>
           </div>
 
           <div class="matrix-counter" id="matrix-counter">Showing 19 sectors</div>
@@ -461,6 +469,9 @@
           </div>
 
           <div class="stock-actions-wrap">
+            <button class="btn-clear-all-filters" id="btn-clear-stock-col-filters" title="Clear all Excel column filters">
+              <span>✕ Clear Column Filters</span>
+            </button>
             <span class="stock-counter" id="stock-match-counter">Showing 205 stocks</span>
             <button class="btn btn-sm btn-outline" id="btn-export-stock-csv" title="Export exact Google Sheet CSV">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
@@ -499,6 +510,122 @@
                 </tr>
               </thead>
               <tbody id="tbody-stock-strength">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: TRADE LIBRARY (LOGGED & STORED TRADES) -->
+    <section class="tab-pane" id="tab-library">
+      <div class="library-layout">
+        <!-- TOP LIBRARY KPI BAR -->
+        <div class="stock-kpi-bar library-kpi-bar">
+          <div class="stock-kpi-card">
+            <div class="kpi-label">Stored Trades</div>
+            <div class="kpi-val text-white" id="lib-kpi-total">0</div>
+            <div class="kpi-sub">Total Stored Positions</div>
+          </div>
+          <div class="stock-kpi-card highlight-cyan">
+            <div class="kpi-label">Open Trades</div>
+            <div class="kpi-val text-cyan" id="lib-kpi-open">0</div>
+            <div class="kpi-sub">Active Positions</div>
+          </div>
+          <div class="stock-kpi-card highlight-green">
+            <div class="kpi-label">Closed Trades</div>
+            <div class="kpi-val text-emerald" id="lib-kpi-closed">0</div>
+            <div class="kpi-sub">Realized History</div>
+          </div>
+          <div class="stock-kpi-card highlight-amber">
+            <div class="kpi-label">Realized P&L</div>
+            <div class="kpi-val font-mono" id="lib-kpi-pnl">₹0.00</div>
+            <div class="kpi-sub" id="lib-kpi-winrate">Win Rate: 0.0%</div>
+          </div>
+          <div class="stock-kpi-card highlight-violet">
+            <div class="kpi-label">Wins / Losses</div>
+            <div class="kpi-val text-violet" id="lib-kpi-ratio">0W / 0L</div>
+            <div class="kpi-sub">Performance Ratio</div>
+          </div>
+        </div>
+
+        <!-- TOOLBAR & ACTIONS -->
+        <div class="stock-toolbar-card library-toolbar-card">
+          <div class="stock-search-wrap">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="lib-search-input" placeholder="Search trades by symbol, strategy, notes..." autocomplete="off">
+            <button class="clear-search-btn" id="btn-clear-lib-search" title="Clear search" style="display:none;">&times;</button>
+          </div>
+
+          <div class="stock-filter-group">
+            <label>Status:</label>
+            <select id="lib-filter-status">
+              <option value="ALL">All Statuses</option>
+              <option value="OPEN">Open (Active)</option>
+              <option value="CLOSED">Closed</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </div>
+
+          <div class="stock-filter-group">
+            <label>Type:</label>
+            <select id="lib-filter-type">
+              <option value="ALL">All Types</option>
+              <option value="BUY">BUY / Long</option>
+              <option value="SELL">SELL / Short</option>
+            </select>
+          </div>
+
+          <div class="stock-pills-wrap">
+            <button class="stock-pill active" data-lib-filter="all">All</button>
+            <button class="stock-pill" data-lib-filter="open">Open Only</button>
+            <button class="stock-pill" data-lib-filter="closed">Closed Only</button>
+            <button class="stock-pill" data-lib-filter="winners">Winners</button>
+            <button class="stock-pill" data-lib-filter="losers">Losers</button>
+          </div>
+
+          <div class="stock-actions-wrap">
+            <span class="stock-counter" id="lib-match-counter">Showing 0 trades</span>
+            <button class="btn btn-sm btn-emerald" id="btn-open-new-trade-modal" title="Log a new trade into library">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <span>+ Log Trade</span>
+            </button>
+            <button class="btn btn-sm btn-outline" id="btn-import-kite-trades" title="Import filled orders/positions from Zerodha Kite">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>Import Kite</span>
+            </button>
+            <button class="btn btn-sm btn-outline" id="btn-export-lib-csv" title="Export library trades as CSV">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              <span>Export CSV</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- TRADES TABLE -->
+        <div class="table-card stock-table-card">
+          <div class="table-scroll-container full-height" id="lib-table-scroll">
+            <table class="data-table stock-table" id="table-trades-library">
+              <thead>
+                <tr>
+                  <th data-lib-sort="symbol">Symbol</th>
+                  <th data-lib-sort="trade_type">Type</th>
+                  <th data-lib-sort="status">Status</th>
+                  <th data-lib-sort="strategy">Strategy / Setup</th>
+                  <th data-lib-sort="quantity" class="num">Quantity</th>
+                  <th data-lib-sort="entry_price" class="num">Entry (₹)</th>
+                  <th data-lib-sort="exit_price" class="num">Exit (₹)</th>
+                  <th data-lib-sort="target" class="num">Target (₹)</th>
+                  <th data-lib-sort="stop_loss" class="num">Stop Loss (₹)</th>
+                  <th data-lib-sort="pnl" class="num">P&L (₹)</th>
+                  <th data-lib-sort="pnl_pct" class="num">Return %</th>
+                  <th data-lib-sort="date">Entry Date</th>
+                  <th data-lib-sort="exit_date">Exit Date</th>
+                  <th>Notes</th>
+                  <th style="text-align: center;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-trades-library">
                 <!-- Injected via JavaScript -->
               </tbody>
             </table>
@@ -592,6 +719,101 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261108_v15"></script>
+  <!-- FLOATING EXCEL COLUMN FILTER POPOVER -->
+  <div class="excel-filter-popover" id="excel-filter-popover"></div>
+
+  <!-- TRADE ENTRY & EDIT MODAL -->
+  <div class="modal-backdrop" id="trade-modal" style="display: none;">
+    <div class="modal-card trade-modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-badge-kite" id="trade-modal-badge">Trade Library</div>
+          <h3 id="trade-modal-title">Log New Trade</h3>
+        </div>
+        <button class="btn-close" id="btn-close-trade-modal">&times;</button>
+      </div>
+
+      <form id="form-trade-entry">
+        <input type="hidden" id="trade-edit-id" value="">
+        <div class="modal-body trade-modal-body">
+          <div class="trade-form-grid">
+            <div class="form-group">
+              <label for="trade-sym">Ticker / Symbol *</label>
+              <input type="text" id="trade-sym" placeholder="e.g. RELIANCE, TCS, INFY" required autocomplete="off" style="text-transform: uppercase;">
+            </div>
+
+            <div class="form-group">
+              <label for="trade-type">Trade Type *</label>
+              <select id="trade-type" required>
+                <option value="BUY">BUY (Long)</option>
+                <option value="SELL">SELL (Short / Exit)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="trade-status">Trade Status *</label>
+              <select id="trade-status" required>
+                <option value="OPEN">OPEN</option>
+                <option value="CLOSED">CLOSED</option>
+                <option value="CANCELLED">CANCELLED</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="trade-strategy">Strategy / Setup</label>
+              <input type="text" id="trade-strategy" placeholder="e.g. Covered Call, 50D Breakout, RS Leader">
+            </div>
+
+            <div class="form-group">
+              <label for="trade-qty">Quantity *</label>
+              <input type="number" step="any" min="0.01" id="trade-qty" placeholder="100" required>
+            </div>
+
+            <div class="form-group">
+              <label for="trade-entry">Entry Price (₹) *</label>
+              <input type="number" step="any" min="0.01" id="trade-entry" placeholder="e.g. 2500.00" required>
+            </div>
+
+            <div class="form-group">
+              <label for="trade-exit">Exit Price (₹)</label>
+              <input type="number" step="any" min="0" id="trade-exit" placeholder="Leave empty if OPEN">
+            </div>
+
+            <div class="form-group">
+              <label for="trade-target">Target (₹)</label>
+              <input type="number" step="any" min="0" id="trade-target" placeholder="e.g. 2700.00">
+            </div>
+
+            <div class="form-group">
+              <label for="trade-sl">Stop Loss (₹)</label>
+              <input type="number" step="any" min="0" id="trade-sl" placeholder="e.g. 2400.00">
+            </div>
+
+            <div class="form-group">
+              <label for="trade-date">Entry Date</label>
+              <input type="date" id="trade-date">
+            </div>
+
+            <div class="form-group">
+              <label for="trade-exit-date">Exit Date</label>
+              <input type="date" id="trade-exit-date">
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top: 10px;">
+            <label for="trade-notes">Trade Rationale / Notes</label>
+            <textarea id="trade-notes" rows="2" placeholder="Entry reason, covered call strike sold, sector tail heading, market regime, etc."></textarea>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" id="btn-cancel-trade">Cancel</button>
+          <button type="submit" class="btn btn-emerald" id="btn-save-trade">Save Trade to Library</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=20261109_v17"></script>
 </body>
 </html>

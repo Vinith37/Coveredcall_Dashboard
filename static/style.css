@@ -1931,3 +1931,519 @@ body {
   color: #10b981;
   font-weight: 700;
 }
+
+/* =================================================================
+   EXCEL-STYLE COLUMN HEADER DROPDOWN FILTERS
+   ================================================================= */
+.th-excel-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+}
+
+.data-table thead th.num .th-excel-wrap {
+  justify-content: flex-end;
+}
+
+.th-label-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stock-table thead th.sort-asc::after,
+.stock-table thead th.sort-desc::after {
+  content: none;
+}
+
+.stock-table thead th.sort-asc .th-label-text::after,
+#table-strength thead th.sort-asc .th-label-text::after {
+  content: '▲';
+  color: var(--cyan);
+  font-size: 0.62rem;
+  margin-left: 3px;
+}
+
+.stock-table thead th.sort-desc .th-label-text::after,
+#table-strength thead th.sort-desc .th-label-text::after {
+  content: '▼';
+  color: var(--cyan);
+  font-size: 0.62rem;
+  margin-left: 3px;
+}
+
+.th-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.th-filter-btn svg {
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.th-filter-btn:hover,
+.th-filter-btn.open {
+  background: rgba(6, 182, 212, 0.22);
+  border-color: var(--cyan);
+  color: #fff;
+}
+
+thead th.has-col-filter {
+  color: var(--cyan) !important;
+  background: #132033 !important;
+}
+
+thead th.has-col-filter .th-filter-btn {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: #080b11;
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.45);
+}
+
+.btn-clear-all-filters {
+  display: none;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(244, 63, 94, 0.45);
+  background: rgba(244, 63, 94, 0.15);
+  color: #fda4af;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.btn-clear-all-filters:hover {
+  background: rgba(244, 63, 94, 0.28);
+  color: #fff;
+}
+
+/* FLOATING EXCEL FILTER POPOVER */
+.excel-filter-popover {
+  position: fixed;
+  z-index: 9999;
+  width: 276px;
+  background: #0f1624;
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  border-radius: 10px;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+
+.excel-filter-popover.visible {
+  display: flex;
+}
+
+.efp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.efp-title {
+  font-weight: 700;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cyan);
+}
+
+.efp-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.efp-close:hover {
+  color: #fff;
+}
+
+.efp-sort-group {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.efp-sort-btn {
+  flex: 1;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s;
+}
+
+.efp-sort-btn:hover,
+.efp-sort-btn.active {
+  background: rgba(6, 182, 212, 0.16);
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.efp-section {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.efp-section-label {
+  font-size: 0.67rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.efp-num-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.efp-select,
+.efp-input {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 5px 7px;
+  font-size: 0.75rem;
+  outline: none;
+}
+
+.efp-select {
+  width: 105px;
+  cursor: pointer;
+}
+
+.efp-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.efp-select:focus,
+.efp-input:focus {
+  border-color: var(--cyan);
+}
+
+.efp-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.efp-preset-chip {
+  padding: 3px 7px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  border-radius: 5px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.efp-preset-chip:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.efp-preset-chip.active {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: var(--emerald);
+  color: #34d399;
+}
+
+.efp-search-box {
+  padding: 8px 10px 4px;
+}
+
+.efp-search-box input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 5px 8px;
+  font-size: 0.75rem;
+  outline: none;
+}
+
+.efp-search-box input:focus {
+  border-color: var(--cyan);
+}
+
+.efp-values-list {
+  max-height: 185px;
+  overflow-y: auto;
+  padding: 4px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.efp-val-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--text-light);
+}
+
+.efp-val-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.efp-val-item.select-all-row {
+  font-weight: 700;
+  color: var(--cyan);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  margin-bottom: 2px;
+  padding-bottom: 5px;
+}
+
+.efp-val-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.efp-val-left input[type="checkbox"] {
+  accent-color: var(--cyan);
+  cursor: pointer;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
+.efp-val-count {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.efp-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.efp-btn-clear {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.73rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.efp-btn-clear:hover {
+  border-color: var(--rose);
+  color: var(--rose);
+}
+
+.efp-btn-apply {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--cyan);
+  background: var(--cyan);
+  color: #080b11;
+  font-size: 0.73rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.efp-btn-apply:hover {
+  filter: brightness(1.1);
+}
+
+/* =================================================================
+   TRADE LIBRARY TAB & FORMS
+   ================================================================= */
+#tab-library {
+  display: none;
+  width: 100%;
+}
+
+#tab-library.active {
+  display: block;
+}
+
+.library-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.trade-modal-card {
+  max-width: 680px;
+}
+
+.trade-modal-body {
+  padding: 18px 24px;
+}
+
+.trade-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px 16px;
+}
+
+.trade-form-grid .form-group input,
+.trade-form-grid .form-group select,
+.trade-modal-body textarea {
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.trade-form-grid .form-group input:focus,
+.trade-form-grid .form-group select:focus,
+.trade-modal-body textarea:focus {
+  border-color: var(--cyan);
+}
+
+.badge-trade-type {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.badge-trade-type.BUY {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.badge-trade-type.SELL {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.badge-trade-status {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.badge-trade-status.OPEN {
+  background: rgba(6, 182, 212, 0.18);
+  color: var(--cyan);
+  border: 1px solid rgba(6, 182, 212, 0.4);
+}
+
+.badge-trade-status.CLOSED {
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.badge-trade-status.CANCELLED {
+  background: rgba(244, 63, 94, 0.12);
+  color: #f43f5e;
+  border: 1px solid rgba(244, 63, 94, 0.25);
+}
+
+.trade-actions-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.btn-trade-action {
+  padding: 3px 7px;
+  font-size: 0.72rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-trade-action:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.btn-trade-action.action-delete:hover {
+  border-color: var(--rose);
+  color: var(--rose);
+}
+
+.btn-trade-action.action-close:hover {
+  border-color: var(--emerald);
+  color: var(--emerald);
+}
+

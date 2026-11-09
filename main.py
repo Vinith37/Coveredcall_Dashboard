@@ -11,6 +11,7 @@ from config import BASE_DIR, SESSION_FILE
 import engine
 import stock_engine
 from kite_service import kite_service
+from trade_store import trade_store
 
 app = FastAPI(
     title="Kite Pulse - Sector Strength & RRG Dashboard",
@@ -35,6 +36,39 @@ class KiteSessionRequest(BaseModel):
 
 class EngineModeRequest(BaseModel):
     mode: str  # 'yfinance' or 'kite'
+
+
+class TradeItemRequest(BaseModel):
+    symbol: str
+    trade_type: str = "BUY"  # BUY / SELL
+    strategy: Optional[str] = "Covered Call / Momentum"
+    quantity: float = 1.0
+    entry_price: float
+    exit_price: Optional[float] = None
+    target: Optional[float] = None
+    stop_loss: Optional[float] = None
+    status: Optional[str] = "OPEN"  # OPEN / CLOSED / CANCELLED
+    date: Optional[str] = None
+    exit_date: Optional[str] = None
+    notes: Optional[str] = ""
+    tags: Optional[list] = []
+    source: Optional[str] = "MANUAL"
+
+
+class TradeUpdateRequest(BaseModel):
+    symbol: Optional[str] = None
+    trade_type: Optional[str] = None
+    strategy: Optional[str] = None
+    quantity: Optional[float] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
+    target: Optional[float] = None
+    stop_loss: Optional[float] = None
+    status: Optional[str] = None
+    date: Optional[str] = None
+    exit_date: Optional[str] = None
+    notes: Optional[str] = None
+    tags: Optional[list] = None
 
 
 CURRENT_ENGINE_MODE = "kite" if kite_service.get_status().get("is_connected") else "yfinance"
@@ -257,6 +291,133 @@ def disconnect_kite():
     kite_service._clear_session_state()
     CURRENT_ENGINE_MODE = "yfinance"
     return JSONResponse(content={"success": True, "message": "Disconnected from Kite. Switched to Zero-Token Yahoo Engine."})
+
+
+# =================================================================
+# TRADES LIBRARY API ENDPOINTS
+# =================================================================
+@app.get("/api/trades")
+def get_trades():
+    """Returns all stored trades in the library and aggregate summary metrics."""
+    trades = trade_store.get_all_trades()
+    summary = trade_store.get_summary()
+    return JSONResponse(content={
+        "success": True,
+        "trades": trades,
+        "summary": summary
+    })
+
+
+@app.post("/api/trades")
+def create_trade(req: TradeItemRequest):
+    """Adds a new trade record to the library."""
+    trade_dict = req.model_dump()
+    created = trade_store.add_trade(trade_dict)
+    return JSONResponse(content={
+        "success": True,
+        "trade": created,
+        "summary": trade_store.get_summary()
+    })
+
+
+@app.put("/api/trades/{trade_id}")
+def update_trade(trade_id: str, req: TradeUpdateRequest):
+    """Updates an existing trade record."""
+    update_data = {k: v for k, v in req.model_dump().items() if v is not None}
+    updated = trade_store.update_trade(trade_id, update_data)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return JSONResponse(content={
+        "success": True,
+        "trade": updated,
+        "summary": trade_store.get_summary()
+    })
+
+
+@app.delete("/api/trades/{trade_id}")
+def delete_trade(trade_id: str):
+    """Deletes a trade record by ID."""
+    deleted = trade_store.delete_trade(trade_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return JSONResponse(content={
+        "success": True,
+        "message": "Trade deleted successfully",
+        "summary": trade_store.get_summary()
+    })
+
+
+@app.post("/api/trades/import-kite")
+def import_trades_from_kite():
+    """Imports orders/positions directly from Zerodha Kite into the trade library."""
+    if not kite_service.kite:
+        raise HTTPException(status_code=400, detail="Zerodha Kite is not connected. Authenticate first.")
+
+    try:
+        imported_count = 0
+        existing_trades = trade_store.get_all_trades()
+        existing_ids = {t.get("id") for t in existing_trades}
+
+        # 1. Fetch completed orders from Kite
+        orders = kite_service.kite.orders()
+        for ord_item in orders:
+            # Only consider filled/complete orders
+            if ord_item.get("status") == "COMPLETE":
+                ord_id = f"kite_ord_{ord_item.get('order_id')}"
+                if ord_id in existing_ids:
+                    continue
+                
+                trade_record = {
+                    "id": ord_id,
+                    "symbol": ord_item.get("tradingsymbol", "").upper(),
+                    "trade_type": ord_item.get("transaction_type", "BUY").upper(),
+                    "strategy": f"{ord_item.get('product', 'CNC')} Order",
+                    "quantity": float(ord_item.get("filled_quantity") or ord_item.get("quantity") or 1.0),
+                    "entry_price": float(ord_item.get("average_price") or ord_item.get("price") or 0.0),
+                    "status": "OPEN",
+                    "date": str(ord_item.get("order_timestamp", ""))[:10] or None,
+                    "notes": f"Kite Order #{ord_item.get('order_id')}",
+                    "source": "KITE_IMPORT"
+                }
+                trade_store.add_trade(trade_record)
+                existing_ids.add(ord_id)
+                imported_count += 1
+
+        # 2. Fetch net positions from Kite
+        positions = kite_service.kite.positions()
+        net_pos = positions.get("net", [])
+        for pos in net_pos:
+            qty = float(pos.get("quantity") or 0.0)
+            if qty == 0 and float(pos.get("day_buy_quantity") or 0) == 0:
+                continue
+            pos_id = f"kite_pos_{pos.get('instrument_token')}"
+            if pos_id in existing_ids:
+                continue
+            
+            trade_record = {
+                "id": pos_id,
+                "symbol": pos.get("tradingsymbol", "").upper(),
+                "trade_type": "BUY" if qty >= 0 else "SELL",
+                "strategy": f"Position ({pos.get('product', 'NRML')})",
+                "quantity": abs(qty) if qty != 0 else float(pos.get("day_buy_quantity", 1)),
+                "entry_price": float(pos.get("average_price") or pos.get("buy_price") or 0.0),
+                "exit_price": float(pos.get("last_price")) if qty == 0 else None,
+                "status": "CLOSED" if qty == 0 else "OPEN",
+                "notes": f"Kite Position PnL: ₹{pos.get('pnl', 0.0)}",
+                "source": "KITE_IMPORT"
+            }
+            trade_store.add_trade(trade_record)
+            existing_ids.add(pos_id)
+            imported_count += 1
+
+        return JSONResponse(content={
+            "success": True,
+            "message": f"Successfully imported {imported_count} trades/positions from Kite.",
+            "imported_count": imported_count,
+            "summary": trade_store.get_summary()
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to import from Kite: {str(e)}")
 
 
 static_dir = BASE_DIR / "static"
