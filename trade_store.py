@@ -67,6 +67,19 @@ class TradeStore:
                 if entry_price > 0:
                     pnl_pct = ((entry_price - exit_price) / entry_price) * 100.0
 
+        # Snapshot of screener indicators at entry or given snapshot
+        snapshot = trade_data.get("snapshot") or {}
+        daily_snapshots = trade_data.get("daily_snapshots") or []
+        
+        # If snapshot is provided, create the initial entry in daily_snapshots if not present
+        if snapshot and not daily_snapshots:
+            init_snap = {
+                "date": date_str,
+                "timestamp": now_str,
+                **snapshot
+            }
+            daily_snapshots.append(init_snap)
+
         new_trade = {
             "id": trade_data.get("id") or f"tr_{uuid.uuid4().hex[:8]}",
             "symbol": trade_data.get("symbol", "").strip().upper(),
@@ -85,6 +98,8 @@ class TradeStore:
             "notes": trade_data.get("notes", "").strip(),
             "tags": trade_data.get("tags") or [],
             "source": trade_data.get("source", "MANUAL"), # MANUAL / KITE_IMPORT / SCREENER
+            "snapshot": snapshot,
+            "daily_snapshots": daily_snapshots,
             "created_at": now_str,
             "updated_at": now_str
         }
@@ -123,6 +138,100 @@ class TradeStore:
         if found:
             self.save_trades(trades)
         return found
+
+    def record_daily_snapshot(self, trade_id: str, snapshot_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Appends or updates today's snapshot row for an active trade."""
+        trades = self.get_all_trades()
+        found = None
+        now_date = datetime.now().strftime("%Y-%m-%d")
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        for t in trades:
+            if t.get("id") == trade_id:
+                daily_list = t.setdefault("daily_snapshots", [])
+                
+                # Check if an entry for today already exists
+                today_entry = next((s for s in daily_list if s.get("date") == now_date), None)
+                snap_entry = {
+                    "date": now_date,
+                    "timestamp": now_ts,
+                    **snapshot_data
+                }
+                
+                if today_entry:
+                    today_entry.update(snap_entry)
+                else:
+                    daily_list.append(snap_entry)
+                
+                # Also keep latest snapshot updated on trade root
+                t["snapshot"] = snapshot_data
+                t["updated_at"] = now_ts
+                found = t
+                break
+
+        if found:
+            self.save_trades(trades)
+        return found
+
+    def sync_open_trades_with_screener(self, screener_rows: List[Dict[str, Any]]) -> int:
+        """
+        Takes live/cached screener rows and updates all OPEN trades with today's snapshot row.
+        Returns count of open trades updated.
+        """
+        trades = self.get_all_trades()
+        now_date = datetime.now().strftime("%Y-%m-%d")
+        now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        lookup = {}
+        for r in screener_rows:
+            sym = (r.get("ticker") or r.get("symbol") or "").upper().replace(".NS", "").strip()
+            if sym:
+                lookup[sym] = r
+
+        updated_count = 0
+        for t in trades:
+            if t.get("status") == "OPEN":
+                sym = t.get("symbol", "").upper().replace(".NS", "").strip()
+                if sym in lookup:
+                    r = lookup[sym]
+                    snap_data = {
+                        "price": r.get("price"),
+                        "last_updated": r.get("last_updated"),
+                        "sma20": r.get("sma20"),
+                        "sma50": r.get("sma50"),
+                        "sma200": r.get("sma200"),
+                        "trend": r.get("trend"),
+                        "rs_score": r.get("rs_score"),
+                        "rs_rating": r.get("rs_rating"),
+                        "rs_signal": r.get("rs_signal"),
+                        "vol_today": r.get("vol_today"),
+                        "vol20": r.get("vol20"),
+                        "rvol": r.get("rvol"),
+                        "breakout": r.get("breakout"),
+                        "accumulation": r.get("accumulation"),
+                        "score": r.get("score"),
+                        "volatility": r.get("volatility"),
+                    }
+                    
+                    daily_list = t.setdefault("daily_snapshots", [])
+                    today_entry = next((s for s in daily_list if s.get("date") == now_date), None)
+                    snap_entry = {
+                        "date": now_date,
+                        "timestamp": now_ts,
+                        **snap_data
+                    }
+                    if today_entry:
+                        today_entry.update(snap_entry)
+                    else:
+                        daily_list.append(snap_entry)
+
+                    t["snapshot"] = snap_data
+                    t["updated_at"] = now_ts
+                    updated_count += 1
+
+        if updated_count > 0:
+            self.save_trades(trades)
+        return updated_count
 
     def delete_trade(self, trade_id: str) -> bool:
         trades = self.get_all_trades()

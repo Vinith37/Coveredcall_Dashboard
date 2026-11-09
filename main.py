@@ -53,6 +53,8 @@ class TradeItemRequest(BaseModel):
     notes: Optional[str] = ""
     tags: Optional[list] = []
     source: Optional[str] = "MANUAL"
+    snapshot: Optional[Dict[str, Any]] = None
+    daily_snapshots: Optional[list] = None
 
 
 class TradeUpdateRequest(BaseModel):
@@ -69,6 +71,8 @@ class TradeUpdateRequest(BaseModel):
     exit_date: Optional[str] = None
     notes: Optional[str] = None
     tags: Optional[list] = None
+    snapshot: Optional[Dict[str, Any]] = None
+    daily_snapshots: Optional[list] = None
 
 
 CURRENT_ENGINE_MODE = "kite" if kite_service.get_status().get("is_connected") else "yfinance"
@@ -418,6 +422,27 @@ def import_trades_from_kite():
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to import from Kite: {str(e)}")
+
+
+@app.post("/api/trades/sync-snapshots")
+def sync_daily_snapshots():
+    """
+    Scans the current screener indicators (price, SMAs, Trend, RS, RVOL, Breakout, etc.)
+    and automatically records/updates today's snapshot for all active OPEN trades.
+    """
+    try:
+        screener_payload = stock_engine.get_stock_strength_payload(force_refresh=False)
+        rows = screener_payload.get("rows", [])
+        updated_count = trade_store.sync_open_trades_with_screener(rows)
+        return JSONResponse(content={
+            "success": True,
+            "updated_count": updated_count,
+            "message": f"Synchronized daily screener snapshot for {updated_count} open trades.",
+            "trades": trade_store.get_all_trades(),
+            "summary": trade_store.get_summary()
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to sync daily snapshots: {str(e)}")
 
 
 static_dir = BASE_DIR / "static"

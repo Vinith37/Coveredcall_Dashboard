@@ -507,6 +507,7 @@
                   <th data-sort="accumulation">Accumulation</th>
                   <th data-sort="score" class="num">Momentum</th>
                   <th data-sort="volatility" class="num">Volatility %</th>
+                  <th style="text-align: center;">Action</th>
                 </tr>
               </thead>
               <tbody id="tbody-stock-strength">
@@ -591,6 +592,10 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
               <span>+ Log Trade</span>
             </button>
+            <button class="btn btn-sm btn-outline" id="btn-sync-daily-snapshots" title="Update today's indicators snapshot for all open trades">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+              <span>Sync Today's Data</span>
+            </button>
             <button class="btn btn-sm btn-outline" id="btn-import-kite-trades" title="Import filled orders/positions from Zerodha Kite">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
               <span>Import Kite</span>
@@ -620,7 +625,7 @@
                   <th data-lib-sort="pnl" class="num">P&L (₹)</th>
                   <th data-lib-sort="pnl_pct" class="num">Return %</th>
                   <th data-lib-sort="date">Entry Date</th>
-                  <th data-lib-sort="exit_date">Exit Date</th>
+                  <th>Indicators & History</th>
                   <th>Notes</th>
                   <th style="text-align: center;">Actions</th>
                 </tr>
@@ -814,6 +819,55 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=20261109_v17"></script>
+  <!-- TRADE SNAPSHOTS & HISTORY MODAL -->
+  <div class="modal-backdrop" id="trade-history-modal" style="display: none;">
+    <div class="modal-card" style="max-width: 960px;">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-badge-kite" id="history-modal-badge">Daily Indicator Log</div>
+          <h3 id="history-modal-title">Trade Indicator Progression</h3>
+        </div>
+        <button class="btn-close" id="btn-close-history-modal">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding: 16px 20px;">
+        <div class="history-trade-summary-card" id="history-trade-summary" style="margin-bottom: 14px; background: rgba(0,0,0,0.35); padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border-subtle); display: flex; flex-wrap: wrap; gap: 16px;">
+          <!-- Dynamically populated -->
+        </div>
+
+        <div class="table-card" style="max-height: 420px; overflow-y: auto;">
+          <table class="data-table stock-table" id="table-trade-history">
+            <thead>
+              <tr>
+                <th>Date / Time</th>
+                <th class="num">LTP Price (₹)</th>
+                <th class="num">SMA 20</th>
+                <th class="num">SMA 50</th>
+                <th class="num">SMA 200</th>
+                <th>Trend Signal</th>
+                <th class="num">RS Value</th>
+                <th class="num">RS Rating</th>
+                <th>RS Signal</th>
+                <th class="num">RVOL</th>
+                <th>Breakout</th>
+                <th>Accum</th>
+                <th class="num">Score</th>
+                <th class="num">Vol %</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-trade-history">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline" id="btn-close-history-footer">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=20261109_v18"></script>
 </body>
 </html>

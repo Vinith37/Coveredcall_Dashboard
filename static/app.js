@@ -1993,6 +1993,11 @@ function renderStockStrengthTable() {
         <td style="text-align:center;">${accumHtml}</td>
         <td>${renderScorePips(r.score)}</td>
         <td class="num font-mono">${r.volatility ? r.volatility.toFixed(1) + '%' : '—'}</td>
+        <td style="text-align:center;">
+          <button class="btn btn-sm btn-emerald" style="padding: 2px 8px; font-size: 0.68rem;" onclick='openTradeModalFromScreenerRow(${JSON.stringify(r).replace(/'/g, "&#39;").replace(/"/g, "&quot;")})' title="Log this stock into Trade Library with full indicator snapshot">
+            + Trade
+          </button>
+        </td>
       </tr>
     `;
   }).join('');
@@ -2684,10 +2689,19 @@ function setupTradeLibraryListeners() {
     await importTradesFromKite();
   });
 
+  // Sync Daily Snapshots
+  document.getElementById('btn-sync-daily-snapshots')?.addEventListener('click', async () => {
+    await syncDailySnapshots();
+  });
+
   // Export CSV
   document.getElementById('btn-export-lib-csv')?.addEventListener('click', () => {
     exportTradeLibraryCSV();
   });
+
+  // History modal close
+  document.getElementById('btn-close-history-modal')?.addEventListener('click', closeTradeHistoryModal);
+  document.getElementById('btn-close-history-footer')?.addEventListener('click', closeTradeHistoryModal);
 
   // Search input
   const searchInput = document.getElementById('lib-search-input');
@@ -2747,7 +2761,7 @@ function setupTradeLibraryListeners() {
   });
 }
 
-function openTradeEntryModal(existingTrade = null) {
+function openTradeEntryModal(existingTrade = null, screenerSnapshot = null) {
   const modal = document.getElementById('trade-modal');
   if (!modal) return;
 
@@ -2766,6 +2780,9 @@ function openTradeEntryModal(existingTrade = null) {
   const exitDateInput = document.getElementById('trade-exit-date');
   const notesInput = document.getElementById('trade-notes');
 
+  // Stored pending snapshot in window state for submit
+  window._pendingTradeSnapshot = screenerSnapshot || (existingTrade ? existingTrade.snapshot : null);
+
   if (existingTrade) {
     if (title) title.textContent = `Edit Trade: ${existingTrade.symbol}`;
     if (editIdInput) editIdInput.value = existingTrade.id;
@@ -2781,6 +2798,25 @@ function openTradeEntryModal(existingTrade = null) {
     if (dateInput) dateInput.value = existingTrade.date || '';
     if (exitDateInput) exitDateInput.value = existingTrade.exit_date || '';
     if (notesInput) notesInput.value = existingTrade.notes || '';
+  } else if (screenerSnapshot) {
+    const sym = (screenerSnapshot.ticker || screenerSnapshot.symbol || '').replace('.NS', '');
+    const price = screenerSnapshot.price || 0;
+    const strat = screenerSnapshot.breakout === 'YES' ? '50D Breakout Setup' : (screenerSnapshot.accumulation === 'ACCUMULATION' ? 'Heavy Accumulation' : 'Relative Strength Momentum');
+
+    if (title) title.textContent = `Log Trade: ${sym} (From Screener Snapshot)`;
+    if (editIdInput) editIdInput.value = '';
+    if (symInput) symInput.value = sym;
+    if (typeSelect) typeSelect.value = 'BUY';
+    if (statusSelect) statusSelect.value = 'OPEN';
+    if (stratInput) stratInput.value = strat;
+    if (qtyInput) qtyInput.value = '100';
+    if (entryInput) entryInput.value = price;
+    if (exitInput) exitInput.value = '';
+    if (targetInput) targetInput.value = price ? (price * 1.10).toFixed(2) : '';
+    if (slInput) slInput.value = screenerSnapshot.sma20 ? screenerSnapshot.sma20.toFixed(2) : (price ? (price * 0.95).toFixed(2) : '');
+    if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
+    if (exitDateInput) exitDateInput.value = '';
+    if (notesInput) notesInput.value = `Captured from Screener: Trend=${screenerSnapshot.trend}, RS=${screenerSnapshot.rs_score?.toFixed(3)}, RVOL=${screenerSnapshot.rvol?.toFixed(2)}x, Score=${screenerSnapshot.score}/5`;
   } else {
     if (title) title.textContent = 'Log New Trade';
     if (editIdInput) editIdInput.value = '';
@@ -2799,6 +2835,10 @@ function openTradeEntryModal(existingTrade = null) {
   }
 
   modal.style.display = 'flex';
+}
+
+function openTradeModalFromScreenerRow(row) {
+  openTradeEntryModal(null, row);
 }
 
 function closeTradeEntryModal() {
@@ -2841,7 +2881,8 @@ async function saveTradeFromModal() {
     stop_loss,
     date,
     exit_date: status === 'CLOSED' ? (exit_date || new Date().toISOString().slice(0, 10)) : null,
-    notes
+    notes,
+    snapshot: window._pendingTradeSnapshot || null
   };
 
   try {
@@ -3028,6 +3069,20 @@ function renderTradeLibraryTable() {
     }
 
     const tradeJson = JSON.stringify(t).replace(/"/g, '&quot;');
+    const snap = t.snapshot || {};
+    const dailyCount = Array.isArray(t.daily_snapshots) ? t.daily_snapshots.length : 0;
+    
+    // Quick indicator pill summary
+    let indPills = '';
+    if (snap.trend) {
+      indPills += `<span class="trend-badge ${snap.trend}" style="font-size:0.65rem; padding:1px 5px;">${snap.trend}</span> `;
+    }
+    if (snap.rs_rating) {
+      indPills += `<span class="rs-rating-pill ${getRsRatingTier(snap.rs_rating)}" style="font-size:0.65rem; padding:1px 5px;">${snap.rs_rating}</span> `;
+    }
+    if (snap.score) {
+      indPills += `<span style="font-family:var(--font-mono); font-size:0.7rem; font-weight:700; color:var(--cyan);">${snap.score}/5</span>`;
+    }
 
     return `
       <tr>
@@ -3046,8 +3101,15 @@ function renderTradeLibraryTable() {
         <td class="num">${pnlHtml}</td>
         <td class="num">${pnlPctHtml}</td>
         <td class="font-mono" style="font-size: 0.72rem; color: var(--text-muted);">${t.date || '—'}</td>
-        <td class="font-mono" style="font-size: 0.72rem; color: var(--text-muted);">${t.exit_date || '<span style="opacity:0.3;">—</span>'}</td>
-        <td style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 0.74rem;" title="${t.notes || ''}">
+        <td>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <div>${indPills || '<span style="color:var(--text-muted); font-size:0.7rem;">No Snapshot</span>'}</div>
+            <button class="btn btn-sm btn-outline" style="padding: 1px 6px; font-size: 0.65rem;" onclick='openTradeHistoryModal(${tradeJson})' title="View daily indicator log history">
+              📊 ${dailyCount}d Log
+            </button>
+          </div>
+        </td>
+        <td style="max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 0.74rem;" title="${t.notes || ''}">
           ${t.notes || '<span style="opacity:0.3;">—</span>'}
         </td>
         <td style="text-align: center;">
@@ -3105,5 +3167,93 @@ function exportTradeLibraryCSV() {
   link.click();
   document.body.removeChild(link);
   showToast('📥 Exported Trades_Library.csv');
+}
+
+async function syncDailySnapshots() {
+  const btn = document.getElementById('btn-sync-daily-snapshots');
+  btn?.classList.add('loading');
+
+  try {
+    const res = await fetch('/api/trades/sync-snapshots', { method: 'POST' });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showToast(`✅ ${data.message}`);
+      await fetchTradeLibraryData();
+    } else {
+      showToast(`⚠️ ${data.detail || 'Could not sync snapshots'}`);
+    }
+  } catch (err) {
+    console.error('Error syncing snapshots:', err);
+    showToast('⚠️ Network error syncing snapshots');
+  } finally {
+    btn?.classList.remove('loading');
+  }
+}
+
+function openTradeHistoryModal(trade) {
+  const modal = document.getElementById('trade-history-modal');
+  if (!modal) return;
+
+  const titleEl = document.getElementById('history-modal-title');
+  if (titleEl) {
+    titleEl.textContent = `Daily Log & Indicator Progression — ${trade.symbol}`;
+  }
+
+  const summaryEl = document.getElementById('history-trade-summary');
+  if (summaryEl) {
+    const isBuy = (trade.trade_type || 'BUY') === 'BUY';
+    const statusClass = trade.status === 'OPEN' ? 'text-cyan' : 'text-emerald';
+    summaryEl.innerHTML = `
+      <div><span style="color:var(--text-muted); font-size:0.75rem;">Status:</span> <strong class="${statusClass}">${trade.status}</strong></div>
+      <div><span style="color:var(--text-muted); font-size:0.75rem;">Type:</span> <strong>${trade.trade_type}</strong></div>
+      <div><span style="color:var(--text-muted); font-size:0.75rem;">Quantity:</span> <strong class="font-mono">${trade.quantity}</strong></div>
+      <div><span style="color:var(--text-muted); font-size:0.75rem;">Entry Price:</span> <strong class="font-mono">₹${Number(trade.entry_price || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</strong></div>
+      <div><span style="color:var(--text-muted); font-size:0.75rem;">Entry Date:</span> <strong class="font-mono">${trade.date || '—'}</strong></div>
+      ${trade.exit_price ? `<div><span style="color:var(--text-muted); font-size:0.75rem;">Exit Price:</span> <strong class="font-mono">₹${Number(trade.exit_price).toLocaleString('en-IN', {minimumFractionDigits: 2})}</strong></div>` : ''}
+      ${trade.pnl ? `<div><span style="color:var(--text-muted); font-size:0.75rem;">Realized PnL:</span> <strong class="font-mono ${trade.pnl > 0 ? 'text-emerald' : 'text-rose'}">₹${Number(trade.pnl).toLocaleString('en-IN', {minimumFractionDigits: 2})} (${trade.pnl_pct}%)</strong></div>` : ''}
+    `;
+  }
+
+  const tbody = document.getElementById('tbody-trade-history');
+  if (tbody) {
+    const snapshots = Array.isArray(trade.daily_snapshots) ? trade.daily_snapshots : [];
+    if (snapshots.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="14" style="text-align:center; padding:32px; color:var(--text-muted);">
+            No daily snapshots recorded yet for ${trade.symbol}. Click <strong>Sync Today's Data</strong> to capture current indicator values.
+          </td>
+        </tr>
+      `;
+    } else {
+      tbody.innerHTML = snapshots.map(s => {
+        return `
+          <tr>
+            <td class="font-mono" style="font-weight:700; color:#fff;">${s.date} <span style="font-size:0.68rem; color:var(--text-muted); font-weight:normal;">${s.timestamp ? s.timestamp.slice(11) : ''}</span></td>
+            <td class="num font-mono font-bold" style="color:var(--cyan);">₹${Number(s.price || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td class="num font-mono">${s.sma20 ? '₹' + Number(s.sma20).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+            <td class="num font-mono">${s.sma50 ? '₹' + Number(s.sma50).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+            <td class="num font-mono">${s.sma200 ? '₹' + Number(s.sma200).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+            <td><span class="trend-badge ${s.trend || 'trend-weak'}">${s.trend || '—'}</span></td>
+            <td class="num font-mono">${s.rs_score !== null && s.rs_score !== undefined ? Number(s.rs_score).toFixed(3) : '—'}</td>
+            <td class="num"><span class="rs-rating-pill ${getRsRatingTier(s.rs_rating)}">${s.rs_rating || '—'}</span></td>
+            <td><span class="rs-signal-badge ${s.rs_signal || 'NEUTRAL'}">${s.rs_signal || '—'}</span></td>
+            <td class="num font-mono ${s.rvol > 1.5 ? 'rvol-high' : ''}">${s.rvol ? Number(s.rvol).toFixed(2) + 'x' : '—'}</td>
+            <td>${s.breakout === 'YES' ? '<span class="badge-breakout">YES</span>' : '<span style="color:var(--text-muted);opacity:0.3;">—</span>'}</td>
+            <td>${s.accumulation === 'ACCUMULATION' ? '<span class="badge-accum">ACCUM</span>' : '<span style="color:var(--text-muted);opacity:0.3;">—</span>'}</td>
+            <td>${renderScorePips(s.score || 0)}</td>
+            <td class="num font-mono">${s.volatility ? Number(s.volatility).toFixed(1) + '%' : '—'}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+  }
+
+  modal.style.display = 'flex';
+}
+
+function closeTradeHistoryModal() {
+  const modal = document.getElementById('trade-history-modal');
+  if (modal) modal.style.display = 'none';
 }
 
