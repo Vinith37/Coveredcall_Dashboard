@@ -2059,7 +2059,8 @@ function exportStockStrengthCSV() {
 // =================================================================
 const NUMERIC_COLS = new Set([
   'price', 'sma20', 'sma50', 'sma200', 'rs_score', 'rs_rating',
-  'vol_today', 'vol20', 'rvol', 'score', 'volatility'
+  'vol_today', 'vol20', 'rvol', 'score', 'volatility',
+  'entry_price', 'exit_price', 'quantity', 'target', 'stop_loss', 'pnl', 'pnl_pct'
 ]);
 
 const COL_PRESETS = {
@@ -2068,6 +2069,18 @@ const COL_PRESETS = {
     { label: '₹500–1.5K', op: 'between', val1: 500, val2: 1500 },
     { label: '₹1.5K–5K', op: 'between', val1: 1500, val2: 5000 },
     { label: '> ₹5,000', op: 'gt', val1: 5000, val2: null }
+  ],
+  pnl: [
+    { label: 'Gain (> ₹0)', op: 'gt', val1: 0, val2: null },
+    { label: 'Loss (< ₹0)', op: 'lt', val1: 0, val2: null },
+    { label: '≥ ₹5,000', op: 'gte', val1: 5000, val2: null },
+    { label: '≥ ₹10,000', op: 'gte', val1: 10000, val2: null }
+  ],
+  pnl_pct: [
+    { label: 'Gain (> 0%)', op: 'gt', val1: 0, val2: null },
+    { label: '≥ +5%', op: 'gte', val1: 5, val2: null },
+    { label: '≥ +10%', op: 'gte', val1: 10, val2: null },
+    { label: 'Loss (< 0%)', op: 'lt', val1: 0, val2: null }
   ],
   sma20: [
     { label: 'Price > SMA 20', op: 'above_sma', val1: null, val2: null },
@@ -2124,16 +2137,22 @@ const COL_PRESETS = {
 
 function formatColDisplayValue(row, col) {
   const raw = row[col];
-  if (col === 'score') return `${raw ?? 0} / 5`;
-  if (col === 'breakout') return raw === 'YES' ? 'YES' : 'NO';
-  if (col === 'accumulation') return raw === 'ACCUMULATION' ? 'ACCUMULATION' : 'NONE';
+  if (col === 'score') return raw != null ? `${raw} / 5` : '—';
+  if (col === 'breakout') return raw === 'YES' ? 'YES' : (raw === 'NO' ? 'NO' : '—');
+  if (col === 'accumulation') return raw === 'ACCUMULATION' ? 'ACCUMULATION' : (raw === 'NONE' ? 'NONE' : '—');
   if (col === 'rs_score') return raw != null ? Number(raw).toFixed(3) : '—';
   if (col === 'rvol') return raw != null ? `${Number(raw).toFixed(2)}x` : '—';
   if (col === 'volatility') return raw != null ? `${Number(raw).toFixed(1)}%` : '—';
-  if (col === 'price' || col === 'sma20' || col === 'sma50' || col === 'sma200') {
+  if (col === 'price' || col === 'entry_price' || col === 'exit_price' || col === 'target' || col === 'stop_loss' || col === 'sma20' || col === 'sma50' || col === 'sma200') {
     return raw != null ? `₹${Number(raw).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
   }
-  if (col === 'vol_today' || col === 'vol20') {
+  if (col === 'pnl') {
+    return raw != null ? `${Number(raw) >= 0 ? '+' : ''}₹${Number(raw).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+  }
+  if (col === 'pnl_pct') {
+    return raw != null ? `${Number(raw) >= 0 ? '+' : ''}${Number(raw).toFixed(2)}%` : '—';
+  }
+  if (col === 'vol_today' || col === 'vol20' || col === 'quantity') {
     return raw != null ? Number(raw).toLocaleString('en-IN') : '—';
   }
   return raw != null && raw !== '' ? String(raw) : '—';
@@ -2219,7 +2238,7 @@ function updateColHeaderFilterIndicators(tableId, filtersMap, clearBtnId) {
 }
 
 function enhanceTableHeadersWithExcelFilters() {
-  ['table-stock-strength', 'table-strength'].forEach(tableId => {
+  ['table-stock-strength', 'table-strength', 'table-trades-library'].forEach(tableId => {
     const table = document.getElementById(tableId);
     if (!table) return;
 
@@ -2259,6 +2278,9 @@ function enhanceTableHeadersWithExcelFilters() {
   document.getElementById('stock-table-scroll')?.addEventListener('scroll', () => {
     if (activeExcelPopover) positionExcelPopover(activeExcelPopover.thEl);
   });
+  document.getElementById('lib-table-scroll')?.addEventListener('scroll', () => {
+    if (activeExcelPopover) positionExcelPopover(activeExcelPopover.thEl);
+  });
 }
 
 function positionExcelPopover(thEl) {
@@ -2296,10 +2318,19 @@ function openExcelFilterPopover(tableId, col, label, thEl, btnEl) {
   activeExcelPopover = { tableId, col, thEl, btnEl };
 
   const isStockTable = tableId === 'table-stock-strength';
-  const sourceRows = isStockTable
-    ? (stockStrengthData?.rows || [])
-    : (dashboardData?.strength_indicators || []);
-  const filtersMap = isStockTable ? stockColFilters : sectorColFilters;
+  const isLibTable = tableId === 'table-trades-library';
+  let sourceRows;
+  let filtersMap;
+  if (isStockTable) {
+    sourceRows = stockStrengthData?.rows || [];
+    filtersMap = stockColFilters;
+  } else if (isLibTable) {
+    sourceRows = getPreparedLibraryRows();
+    filtersMap = libColFilters;
+  } else {
+    sourceRows = dashboardData?.strength_indicators || [];
+    filtersMap = sectorColFilters;
+  }
   const currentFilter = filtersMap[col] || { selectedValues: null, op: 'ALL', val1: null, val2: null };
 
   // Filter rows by all OTHER columns to compute accurate Excel-style value counts
@@ -2341,10 +2372,14 @@ function openExcelFilterPopover(tableId, col, label, thEl, btnEl) {
 
   const isSortedAsc = isStockTable
     ? (stockSortCol === col && stockSortDir === 'asc')
-    : (strengthSortCol === col && strengthSortAsc === true);
+    : isLibTable
+      ? (libSortCol === col && libSortDir === 'asc')
+      : (strengthSortCol === col && strengthSortAsc === true);
   const isSortedDesc = isStockTable
     ? (stockSortCol === col && stockSortDir === 'desc')
-    : (strengthSortCol === col && strengthSortAsc === false);
+    : isLibTable
+      ? (libSortCol === col && libSortDir === 'desc')
+      : (strengthSortCol === col && strengthSortAsc === false);
 
   const presets = COL_PRESETS[col] || [];
   const hasSmaOps = col === 'sma20' || col === 'sma50' || col === 'sma200';
@@ -2543,6 +2578,7 @@ function openExcelFilterPopover(tableId, col, label, thEl, btnEl) {
     delete filtersMap[col];
     closeExcelFilterPopover();
     if (isStockTable) renderStockStrengthTable();
+    else if (isLibTable) renderTradeLibraryTable();
     else renderStrengthTable();
   });
 
@@ -2563,6 +2599,7 @@ function openExcelFilterPopover(tableId, col, label, thEl, btnEl) {
 
     closeExcelFilterPopover();
     if (isStockTable) renderStockStrengthTable();
+    else if (isLibTable) renderTradeLibraryTable();
     else renderStrengthTable();
   });
 }
@@ -2578,6 +2615,16 @@ function applyTableSort(tableId, col, dir) {
       }
     });
     renderStockStrengthTable();
+  } else if (tableId === 'table-trades-library') {
+    libSortCol = col;
+    libSortDir = dir;
+    document.querySelectorAll('#table-trades-library thead th').forEach(h => {
+      h.classList.remove('sort-asc', 'sort-desc');
+      if (h.getAttribute('data-sort') === col) {
+        h.classList.add(dir === 'asc' ? 'sort-asc' : 'sort-desc');
+      }
+    });
+    renderTradeLibraryTable();
   } else {
     strengthSortCol = col;
     strengthSortAsc = (dir === 'asc');
@@ -2603,9 +2650,48 @@ let libSearchQuery = '';
 let libStatusFilter = 'ALL';
 let libTypeFilter = 'ALL';
 let libQuickFilter = 'all';
+let libColFilters = {};
+
+function getTradeFlatRow(t) {
+  const latestSnap = (Array.isArray(t.daily_snapshots) && t.daily_snapshots.length > 0)
+    ? t.daily_snapshots[t.daily_snapshots.length - 1]
+    : (t.snapshot || {});
+  const entrySnap = t.snapshot || {};
+
+  // Current price / LTP (latest snapshot price if available, else exit price for closed, or entry price)
+  const ltp = latestSnap.price ?? (t.status === 'CLOSED' ? t.exit_price : t.entry_price);
+
+  return {
+    ...t,
+    ticker: t.symbol,
+    price: ltp,
+    last_updated: latestSnap.last_updated || entrySnap.last_updated || t.date,
+    sma20: latestSnap.sma20 ?? entrySnap.sma20 ?? null,
+    sma50: latestSnap.sma50 ?? entrySnap.sma50 ?? null,
+    sma200: latestSnap.sma200 ?? entrySnap.sma200 ?? null,
+    trend: latestSnap.trend ?? entrySnap.trend ?? null,
+    rs_score: latestSnap.rs_score ?? entrySnap.rs_score ?? null,
+    rs_rating: latestSnap.rs_rating ?? entrySnap.rs_rating ?? null,
+    rs_signal: latestSnap.rs_signal ?? entrySnap.rs_signal ?? null,
+    vol_today: latestSnap.vol_today ?? entrySnap.vol_today ?? null,
+    vol20: latestSnap.vol20 ?? entrySnap.vol20 ?? null,
+    rvol: latestSnap.rvol ?? entrySnap.rvol ?? null,
+    breakout: latestSnap.breakout ?? entrySnap.breakout ?? null,
+    accumulation: latestSnap.accumulation ?? entrySnap.accumulation ?? null,
+    score: latestSnap.score ?? entrySnap.score ?? null,
+    volatility: latestSnap.volatility ?? entrySnap.volatility ?? null,
+    _latestSnap: latestSnap,
+    _entrySnap: entrySnap
+  };
+}
+
+function getPreparedLibraryRows() {
+  return (libraryTrades || []).map(getTradeFlatRow);
+}
 
 function initTradeLibrary() {
   setupTradeLibraryListeners();
+  enhanceTableHeadersWithExcelFilters();
   fetchTradeLibraryData();
 }
 
@@ -2740,16 +2826,23 @@ function setupTradeLibraryListeners() {
     });
   });
 
+  // Clear all excel column filters button
+  document.getElementById('btn-clear-lib-col-filters')?.addEventListener('click', () => {
+    libColFilters = {};
+    renderTradeLibraryTable();
+  });
+
   // Table header sorting
-  document.querySelectorAll('#table-trades-library thead th[data-lib-sort]').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.getAttribute('data-lib-sort');
+  document.querySelectorAll('#table-trades-library thead th[data-sort]').forEach(th => {
+    th.addEventListener('click', (e) => {
+      if (e.target.closest('.th-filter-btn')) return;
+      const col = th.getAttribute('data-sort');
       if (!col) return;
       if (libSortCol === col) {
         libSortDir = libSortDir === 'asc' ? 'desc' : 'asc';
       } else {
         libSortCol = col;
-        libSortDir = ['symbol', 'trade_type', 'status', 'strategy', 'date'].includes(col) ? 'asc' : 'desc';
+        libSortDir = ['symbol', 'trade_type', 'status', 'strategy', 'date', 'trend', 'rs_signal', 'breakout', 'accumulation'].includes(col) ? 'asc' : 'desc';
       }
 
       document.querySelectorAll('#table-trades-library thead th').forEach(h => {
@@ -2990,12 +3083,12 @@ function renderTradeLibraryTable() {
   const counterEl = document.getElementById('lib-match-counter');
   if (!tbody) return;
 
-  let list = [...libraryTrades];
-  const total = list.length;
+  let flatList = getPreparedLibraryRows();
+  const total = flatList.length;
 
   // Search filter
   if (libSearchQuery) {
-    list = list.filter(t => 
+    flatList = flatList.filter(t => 
       (t.symbol && t.symbol.toLowerCase().includes(libSearchQuery)) ||
       (t.strategy && t.strategy.toLowerCase().includes(libSearchQuery)) ||
       (t.notes && t.notes.toLowerCase().includes(libSearchQuery))
@@ -3004,27 +3097,36 @@ function renderTradeLibraryTable() {
 
   // Status dropdown filter
   if (libStatusFilter !== 'ALL') {
-    list = list.filter(t => t.status === libStatusFilter);
+    flatList = flatList.filter(t => t.status === libStatusFilter);
   }
 
   // Type dropdown filter
   if (libTypeFilter !== 'ALL') {
-    list = list.filter(t => t.trade_type === libTypeFilter);
+    flatList = flatList.filter(t => t.trade_type === libTypeFilter);
   }
 
   // Quick pills filter
   if (libQuickFilter === 'open') {
-    list = list.filter(t => t.status === 'OPEN');
+    flatList = flatList.filter(t => t.status === 'OPEN');
   } else if (libQuickFilter === 'closed') {
-    list = list.filter(t => t.status === 'CLOSED');
+    flatList = flatList.filter(t => t.status === 'CLOSED');
   } else if (libQuickFilter === 'winners') {
-    list = list.filter(t => (t.pnl || 0) > 0);
+    flatList = flatList.filter(t => (t.pnl || 0) > 0);
   } else if (libQuickFilter === 'losers') {
-    list = list.filter(t => (t.pnl || 0) < 0);
+    flatList = flatList.filter(t => (t.pnl || 0) < 0);
   }
 
+  // Excel column filters
+  flatList = flatList.filter(r => rowMatchesColFilters(r, libColFilters));
+  updateColHeaderFilterIndicators('table-trades-library', libColFilters, 'btn-clear-lib-col-filters');
+
   // Sorting
-  list.sort((a, b) => {
+  flatList.sort((a, b) => {
+    if (libSortCol === 'score') {
+      const diff = libSortDir === 'asc' ? (a.score || 0) - (b.score || 0) : (b.score || 0) - (a.score || 0);
+      if (diff !== 0) return diff;
+      return (b.rs_score || 0) - (a.rs_score || 0);
+    }
     const va = a[libSortCol] ?? '';
     const vb = b[libSortCol] ?? '';
     if (typeof va === 'number' && typeof vb === 'number') {
@@ -3036,21 +3138,21 @@ function renderTradeLibraryTable() {
   });
 
   if (counterEl) {
-    counterEl.textContent = `Showing ${list.length} of ${total} trades`;
+    counterEl.textContent = `Showing ${flatList.length} of ${total} trades`;
   }
 
-  if (list.length === 0) {
+  if (flatList.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="15" style="text-align:center; padding: 48px; color: var(--text-muted);">
-          No stored trades found. Click <strong>+ Log Trade</strong> or <strong>Import Kite</strong> to store your first trade.
+        <td colspan="28" style="text-align:center; padding: 48px; color: var(--text-muted);">
+          No stored trades matching filters. Click <strong>+ Log Trade</strong> or <strong>Import Kite</strong> to store your first trade.
         </td>
       </tr>
     `;
     return;
   }
 
-  tbody.innerHTML = list.map(t => {
+  tbody.innerHTML = flatList.map(t => {
     const isBuy = (t.trade_type || 'BUY') === 'BUY';
     const typeBadge = `<span class="badge-trade-type ${isBuy ? 'BUY' : 'SELL'}">${t.trade_type || 'BUY'}</span>`;
     const statusBadge = `<span class="badge-trade-status ${t.status || 'OPEN'}">${t.status || 'OPEN'}</span>`;
@@ -3069,20 +3171,9 @@ function renderTradeLibraryTable() {
     }
 
     const tradeJson = JSON.stringify(t).replace(/"/g, '&quot;');
-    const snap = t.snapshot || {};
     const dailyCount = Array.isArray(t.daily_snapshots) ? t.daily_snapshots.length : 0;
-    
-    // Quick indicator pill summary
-    let indPills = '';
-    if (snap.trend) {
-      indPills += `<span class="trend-badge ${snap.trend}" style="font-size:0.65rem; padding:1px 5px;">${snap.trend}</span> `;
-    }
-    if (snap.rs_rating) {
-      indPills += `<span class="rs-rating-pill ${getRsRatingTier(snap.rs_rating)}" style="font-size:0.65rem; padding:1px 5px;">${snap.rs_rating}</span> `;
-    }
-    if (snap.score) {
-      indPills += `<span style="font-family:var(--font-mono); font-size:0.7rem; font-weight:700; color:var(--cyan);">${snap.score}/5</span>`;
-    }
+    const breakoutHtml = t.breakout === 'YES' ? `<span class="badge-breakout">YES</span>` : '<span style="color:var(--text-muted);opacity:0.3;">—</span>';
+    const accumHtml = t.accumulation === 'ACCUMULATION' ? `<span class="badge-accum">ACCUM</span>` : '<span style="color:var(--text-muted);opacity:0.3;">—</span>';
 
     return `
       <tr>
@@ -3092,25 +3183,36 @@ function renderTradeLibraryTable() {
         </td>
         <td>${typeBadge}</td>
         <td>${statusBadge}</td>
-        <td style="color: var(--text-secondary);">${t.strategy || '—'}</td>
         <td class="num font-mono">${Number(t.quantity || 0).toLocaleString()}</td>
         <td class="num font-mono">₹${Number(t.entry_price || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-        <td class="num font-mono">${t.exit_price ? '₹' + Number(t.exit_price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
-        <td class="num font-mono">${t.target ? '₹' + Number(t.target).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
-        <td class="num font-mono">${t.stop_loss ? '₹' + Number(t.stop_loss).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono">${t.price != null ? '₹' + Number(t.price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
         <td class="num">${pnlHtml}</td>
         <td class="num">${pnlPctHtml}</td>
+
+        <!-- Exact Screener Parameters requested by user with Excel filters -->
+        <td class="num font-mono">${t.sma20 != null ? '₹' + Number(t.sma20).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono">${t.sma50 != null ? '₹' + Number(t.sma50).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono">${t.sma200 != null ? '₹' + Number(t.sma200).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td>${t.trend ? `<span class="trend-badge ${t.trend}">${t.trend}</span>` : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono font-bold">${t.rs_score != null ? Number(t.rs_score).toFixed(3) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num">${t.rs_rating != null ? `<span class="rs-rating-pill ${getRsRatingTier(t.rs_rating)}">${t.rs_rating}</span>` : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td>${t.rs_signal ? `<span class="rs-signal-badge ${t.rs_signal}">${t.rs_signal}</span>` : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono">${t.vol_today != null ? Number(t.vol_today).toLocaleString('en-IN') : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono">${t.vol20 != null ? Number(t.vol20).toLocaleString('en-IN') : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono ${t.rvol > 1.5 ? 'rvol-high' : ''}">${t.rvol != null ? Number(t.rvol).toFixed(2) + 'x' : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td style="text-align:center;">${breakoutHtml}</td>
+        <td style="text-align:center;">${accumHtml}</td>
+        <td>${t.score != null ? renderScorePips(t.score) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono">${t.volatility != null ? Number(t.volatility).toFixed(1) + '%' : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+
+        <td style="color: var(--text-secondary);">${t.strategy || '—'}</td>
+        <td class="num font-mono">${t.target ? '₹' + Number(t.target).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
+        <td class="num font-mono">${t.stop_loss ? '₹' + Number(t.stop_loss).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '<span style="color:var(--text-muted); opacity:0.3;">—</span>'}</td>
         <td class="font-mono" style="font-size: 0.72rem; color: var(--text-muted);">${t.date || '—'}</td>
         <td>
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <div>${indPills || '<span style="color:var(--text-muted); font-size:0.7rem;">No Snapshot</span>'}</div>
-            <button class="btn btn-sm btn-outline" style="padding: 1px 6px; font-size: 0.65rem;" onclick='openTradeHistoryModal(${tradeJson})' title="View daily indicator log history">
-              📊 ${dailyCount}d Log
-            </button>
-          </div>
-        </td>
-        <td style="max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 0.74rem;" title="${t.notes || ''}">
-          ${t.notes || '<span style="opacity:0.3;">—</span>'}
+          <button class="btn btn-sm btn-outline" style="padding: 2px 7px; font-size: 0.68rem;" onclick='openTradeHistoryModal(${tradeJson})' title="View daily indicator log history">
+            📊 ${dailyCount}d Log
+          </button>
         </td>
         <td style="text-align: center;">
           <div class="trade-actions-cell">
@@ -3125,32 +3227,50 @@ function renderTradeLibraryTable() {
 }
 
 function exportTradeLibraryCSV() {
-  if (!libraryTrades || libraryTrades.length === 0) {
+  const flatTrades = getPreparedLibraryRows();
+  if (!flatTrades || flatTrades.length === 0) {
     showToast('No trades in library to export');
     return;
   }
 
   const headers = [
-    'ID', 'Symbol', 'Type', 'Status', 'Strategy', 'Quantity', 'Entry_Price',
-    'Exit_Price', 'Target', 'Stop_Loss', 'PnL', 'PnL_Pct', 'Date', 'Exit_Date', 'Source', 'Notes'
+    'ID', 'Ticker', 'Type', 'Status', 'Quantity', 'Entry_Price', 'Price_LTP',
+    'PnL', 'PnL_Pct', 'SMA20', 'SMA50', 'SMA200', 'Trend_Signal', 'RS_Value',
+    'RS_Rating', 'RS_Signal', 'Vol_Today', 'Vol20', 'RVOL', 'Breakout_50D',
+    'Accumulation', 'Momentum', 'Volatility_Pct', 'Strategy', 'Target', 'Stop_Loss',
+    'Entry_Date', 'Exit_Date', 'Source', 'Notes'
   ];
 
   const csvRows = [headers.join(',')];
 
-  libraryTrades.forEach(t => {
+  flatTrades.forEach(t => {
     csvRows.push([
       `"${t.id || ''}"`,
       `"${t.symbol || ''}"`,
       `"${t.trade_type || 'BUY'}"`,
       `"${t.status || 'OPEN'}"`,
-      `"${t.strategy || ''}"`,
       t.quantity ?? '',
       t.entry_price ?? '',
-      t.exit_price ?? '',
-      t.target ?? '',
-      t.stop_loss ?? '',
+      t.price ?? '',
       t.pnl ?? '',
       t.pnl_pct ?? '',
+      t.sma20 ?? '',
+      t.sma50 ?? '',
+      t.sma200 ?? '',
+      `"${t.trend || ''}"`,
+      t.rs_score ?? '',
+      t.rs_rating ?? '',
+      `"${t.rs_signal || ''}"`,
+      t.vol_today ?? '',
+      t.vol20 ?? '',
+      t.rvol ?? '',
+      `"${t.breakout || ''}"`,
+      `"${t.accumulation || ''}"`,
+      t.score ?? '',
+      t.volatility ?? '',
+      `"${(t.strategy || '').replace(/"/g, '""')}"`,
+      t.target ?? '',
+      t.stop_loss ?? '',
       `"${t.date || ''}"`,
       `"${t.exit_date || ''}"`,
       `"${t.source || 'MANUAL'}"`,

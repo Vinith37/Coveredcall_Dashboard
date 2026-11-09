@@ -587,6 +587,9 @@
           </div>
 
           <div class="stock-actions-wrap">
+            <button class="btn-clear-all-filters" id="btn-clear-lib-col-filters" title="Clear all Excel column filters" style="display:none;">
+              <span>✕ Clear Column Filters</span>
+            </button>
             <span class="stock-counter" id="lib-match-counter">Showing 0 trades</span>
             <button class="btn btn-sm btn-emerald" id="btn-open-new-trade-modal" title="Log a new trade into library">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
@@ -613,20 +616,33 @@
             <table class="data-table stock-table" id="table-trades-library">
               <thead>
                 <tr>
-                  <th data-lib-sort="symbol">Symbol</th>
-                  <th data-lib-sort="trade_type">Type</th>
-                  <th data-lib-sort="status">Status</th>
-                  <th data-lib-sort="strategy">Strategy / Setup</th>
-                  <th data-lib-sort="quantity" class="num">Quantity</th>
-                  <th data-lib-sort="entry_price" class="num">Entry (₹)</th>
-                  <th data-lib-sort="exit_price" class="num">Exit (₹)</th>
-                  <th data-lib-sort="target" class="num">Target (₹)</th>
-                  <th data-lib-sort="stop_loss" class="num">Stop Loss (₹)</th>
-                  <th data-lib-sort="pnl" class="num">P&L (₹)</th>
-                  <th data-lib-sort="pnl_pct" class="num">Return %</th>
-                  <th data-lib-sort="date">Entry Date</th>
-                  <th>Indicators & History</th>
-                  <th>Notes</th>
+                  <th data-sort="symbol">Ticker</th>
+                  <th data-sort="trade_type">Type</th>
+                  <th data-sort="status">Status</th>
+                  <th data-sort="quantity" class="num">Quantity</th>
+                  <th data-sort="entry_price" class="num">Entry (₹)</th>
+                  <th data-sort="price" class="num">Price (₹)</th>
+                  <th data-sort="pnl" class="num">P&L (₹)</th>
+                  <th data-sort="pnl_pct" class="num">Return %</th>
+                  <th data-sort="sma20" class="num">SMA 20</th>
+                  <th data-sort="sma50" class="num">SMA 50</th>
+                  <th data-sort="sma200" class="num">SMA 200</th>
+                  <th data-sort="trend">Trend Signal</th>
+                  <th data-sort="rs_score" class="num">RS Value</th>
+                  <th data-sort="rs_rating" class="num">RS Rating</th>
+                  <th data-sort="rs_signal">RS Signal</th>
+                  <th data-sort="vol_today" class="num">Vol Today</th>
+                  <th data-sort="vol20" class="num">Vol 20</th>
+                  <th data-sort="rvol" class="num">RVOL</th>
+                  <th data-sort="breakout">50D Breakout</th>
+                  <th data-sort="accumulation">Accumulation</th>
+                  <th data-sort="score" class="num">Momentum</th>
+                  <th data-sort="volatility" class="num">Volatility %</th>
+                  <th data-sort="strategy">Strategy / Setup</th>
+                  <th data-sort="target" class="num">Target (₹)</th>
+                  <th data-sort="stop_loss" class="num">Stop Loss (₹)</th>
+                  <th data-sort="date">Entry Date</th>
+                  <th>Daily Log</th>
                   <th style="text-align: center;">Actions</th>
                 </tr>
               </thead>
