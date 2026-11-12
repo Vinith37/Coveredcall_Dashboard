@@ -1,13 +1,11 @@
-import json
 import math
-import time
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 import pandas as pd
 import yfinance as yf
 
+from cache_utils import load_or_refresh_cache
 from config import (
     SECTORS,
     SECTOR_MAP,
@@ -433,32 +431,8 @@ def fetch_yahoo_market_data() -> Dict[str, Any]:
     return {"daily": daily_history, "weekly": weekly_history}
 
 
-def get_dashboard_payload(force_refresh: bool = False) -> Dict[str, Any]:
-    """
-    Retrieves full dashboard payload with smart local caching to ensure minimal token/network utilization.
-    """
-    now = time.time()
-
-    if not force_refresh and CACHE_FILE.exists():
-        try:
-            with open(CACHE_FILE, "r") as f:
-                cached = json.load(f)
-            cached_time = cached.get("timestamp", 0)
-            remaining_ttl = CACHE_TTL_SECONDS - (now - cached_time)
-            if remaining_ttl > 0 and cached.get("data", {}).get("daily_rrg"):
-                token_stats["cache_hits"] += 1
-                cached["data"]["cache_status"] = {
-                    "is_cached": True,
-                    "remaining_ttl_seconds": int(remaining_ttl),
-                    "cache_ttl_seconds": CACHE_TTL_SECONDS,
-                    "tokens_used": token_stats["kite_tokens_used"],
-                    "cache_hits": token_stats["cache_hits"],
-                    "source": token_stats["source"]
-                }
-                return cached["data"]
-        except Exception as e:
-            print("Error reading cache file:", e)
-
+def _build_fresh_dashboard() -> Dict[str, Any]:
+    """Fetches market data from Yahoo Finance and computes the full dashboard payload."""
     market_data = fetch_yahoo_market_data()
     daily_history = market_data["daily"]
     weekly_history = market_data["weekly"]
@@ -484,7 +458,7 @@ def get_dashboard_payload(force_refresh: bool = False) -> Dict[str, Any]:
     daily_rrg_list = build_rrg_list(daily_history, nifty_daily["close"])
     weekly_rrg_list = build_rrg_list(weekly_history, nifty_weekly["close"])
 
-    payload = {
+    return {
         "regime": strength["regime"],
         "strength_indicators": strength["metrics"],
         "daily_rrg": daily_rrg_list,
@@ -500,41 +474,36 @@ def get_dashboard_payload(force_refresh: bool = False) -> Dict[str, Any]:
             "last_fetched": token_stats["last_fetched"],
             "source": token_stats["source"]
         },
-        "cache_status": {
-            "is_cached": False,
-            "remaining_ttl_seconds": CACHE_TTL_SECONDS,
-            "cache_ttl_seconds": CACHE_TTL_SECONDS,
-            "tokens_used": token_stats["kite_tokens_used"],
-            "cache_hits": token_stats["cache_hits"],
-            "source": token_stats["source"]
-        }
     }
 
-    if daily_rrg_list and strength.get("metrics"):
-        try:
-            with open(CACHE_FILE, "w") as f:
-                json.dump({"timestamp": now, "data": payload}, f)
-        except Exception as e:
-            print("Error saving to cache file:", e)
-    elif CACHE_FILE.exists():
-        try:
-            with open(CACHE_FILE, "r") as f:
-                cached = json.load(f)
-            cached_data = cached.get("data", {})
-            if cached_data.get("daily_rrg"):
-                print("Fresh fetch had missing data; serving previously cached data.")
-                cached_data["cache_status"] = {
-                    "is_cached": True,
-                    "remaining_ttl_seconds": CACHE_TTL_SECONDS,
-                    "cache_ttl_seconds": CACHE_TTL_SECONDS,
-                    "tokens_used": token_stats["kite_tokens_used"],
-                    "cache_hits": token_stats["cache_hits"],
-                    "source": token_stats["source"],
-                }
-                with open(CACHE_FILE, "w") as fw:
-                    json.dump({"timestamp": now, "data": cached_data}, fw)
-                return cached_data
-        except Exception as e:
-            print("Error reading fallback cache:", e)
+
+def get_dashboard_payload(force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    Retrieves full dashboard payload with smart local caching to ensure minimal token/network utilization.
+    Uses the shared load_or_refresh_cache helper.
+    """
+    def _on_cache_hit(data: Dict[str, Any], remaining: int) -> None:
+        token_stats["cache_hits"] += 1
+        cs = data.get("cache_status", {})
+        cs["tokens_used"] = token_stats["kite_tokens_used"]
+        cs["cache_hits"] = token_stats["cache_hits"]
+        cs["source"] = token_stats["source"]
+        if "token_stats" in data:
+            data["token_stats"]["cache_hits"] = token_stats["cache_hits"]
+
+    payload = load_or_refresh_cache(
+        cache_file=CACHE_FILE,
+        ttl_seconds=CACHE_TTL_SECONDS,
+        fetch_fn=_build_fresh_dashboard,
+        validate_fn=lambda d: bool(d.get("daily_rrg") and d.get("strength_indicators")),
+        force_refresh=force_refresh,
+        on_cache_hit=_on_cache_hit,
+    )
+
+    # Stamp token stats on fresh payloads
+    cs = payload.get("cache_status", {})
+    cs.setdefault("tokens_used", token_stats["kite_tokens_used"])
+    cs.setdefault("cache_hits", token_stats["cache_hits"])
+    cs.setdefault("source", token_stats["source"])
 
     return payload

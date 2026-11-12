@@ -1,8 +1,10 @@
 import os
 import json
+import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
+import requests
 from dotenv import load_dotenv
 from kiteconnect import KiteConnect
 from kiteconnect.exceptions import TokenException
@@ -36,6 +38,39 @@ class KiteService:
         self._refresh_credentials()
         return f"https://kite.zerodha.com/connect/login?v=3&api_key={self.api_key}"
 
+    def _create_kite_client(self, access_token: Optional[str] = None) -> KiteConnect:
+        """Instantiates a KiteConnect client with a safe network timeout."""
+        kite = KiteConnect(api_key=self.api_key, timeout=15)
+        if access_token:
+            kite.set_access_token(access_token)
+        return kite
+
+    @staticmethod
+    def _with_network_retry(fn, retries: int = 2, delay: float = 0.6):
+        """Retries transient network/DNS errors with short exponential backoff."""
+        last_exc = None
+        for attempt in range(retries + 1):
+            try:
+                return fn()
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                last_exc = exc
+                if attempt < retries:
+                    time.sleep(delay * (attempt + 1))
+        raise last_exc
+
+    @staticmethod
+    def _format_kite_error(exc: Exception) -> str:
+        """Returns an actionable error message for DNS/network vs API/token failures."""
+        msg = str(exc)
+        if "NameResolutionError" in msg or "Failed to resolve" in msg or "nodename nor servname" in msg:
+            return (
+                "Cannot reach api.kite.trade (DNS/network blocked or offline). "
+                "Ensure the server is running outside a restricted sandbox with internet access."
+            )
+        if isinstance(exc, requests.exceptions.Timeout):
+            return "Timed out connecting to Zerodha Kite API (api.kite.trade). Please retry."
+        return msg
+
     def _clear_session_state(self):
         self.access_token = None
         self.kite = None
@@ -53,11 +88,10 @@ class KiteService:
                 token = data.get("access_token")
                 token_date = data.get("date")
 
-                if token and token_date == today_str:
-                    kite = KiteConnect(api_key=self.api_key)
-                    kite.set_access_token(token)
+                if token and token_date == today_str and self.api_key:
+                    kite = self._create_kite_client(token)
                     try:
-                        profile = kite.profile()
+                        profile = self._with_network_retry(kite.profile, retries=1)
                         self.access_token = token
                         self.kite = kite
                         self.session_info = {
@@ -84,6 +118,9 @@ class KiteService:
     def generate_session(self, request_token: str) -> Dict[str, Any]:
         """Exchanges request_token from Kite redirect URL for a daily access_token."""
         self._refresh_credentials()
+        if not self.api_key or not self.api_secret:
+            return {"success": False, "error": "KITE_API_KEY or KITE_API_SECRET is missing in .env"}
+
         clean_req_token = request_token.strip()
 
         # If this exact request_token was just exchanged (e.g. via auto-redirect), return existing session
@@ -100,8 +137,10 @@ class KiteService:
             }
 
         try:
-            kite = KiteConnect(api_key=self.api_key)
-            session_data = kite.generate_session(clean_req_token, api_secret=self.api_secret)
+            kite = self._create_kite_client()
+            session_data = self._with_network_retry(
+                lambda: kite.generate_session(clean_req_token, api_secret=self.api_secret)
+            )
             self.access_token = session_data["access_token"]
             self.last_request_token = clean_req_token
             self.kite = kite
@@ -124,16 +163,18 @@ class KiteService:
                 "session": save_data,
             }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": self._format_kite_error(e)}
 
     def set_direct_access_token(self, access_token: str) -> Dict[str, Any]:
         """Allows direct entry of an existing access token."""
         self._refresh_credentials()
+        if not self.api_key:
+            return {"success": False, "error": "KITE_API_KEY is missing in .env"}
+
         clean_token = access_token.strip()
         try:
-            kite = KiteConnect(api_key=self.api_key)
-            kite.set_access_token(clean_token)
-            profile = kite.profile()
+            kite = self._create_kite_client(clean_token)
+            profile = self._with_network_retry(kite.profile, retries=1)
 
             self.access_token = clean_token
             self.kite = kite
@@ -153,7 +194,7 @@ class KiteService:
                 "session": save_data,
             }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": self._format_kite_error(e)}
 
     def get_status(self) -> Dict[str, Any]:
         """Returns Kite connection status."""

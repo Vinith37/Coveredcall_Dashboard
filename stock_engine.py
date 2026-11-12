@@ -1,10 +1,9 @@
-import json
-import time
 from datetime import datetime
 from typing import Dict, List, Any
 
 import yfinance as yf
 
+from cache_utils import load_or_refresh_cache
 from config import BASE_DIR, NIFTY_SYMBOL, CACHE_TTL_SECONDS
 from engine import (
     extract_yf_series,
@@ -142,57 +141,13 @@ def calculate_stock_indicators(history_map: Dict[str, Dict[str, List[float]]]) -
 
 def get_stock_strength_payload(force_refresh: bool = False) -> Dict[str, Any]:
     """Returns stock strength payload with local caching and fallback resilience."""
-    now = time.time()
-    if not force_refresh and STOCK_CACHE_FILE.exists():
-        try:
-            with open(STOCK_CACHE_FILE, "r") as f:
-                cached = json.load(f)
-            cached_time = cached.get("cache_timestamp", 0)
-            remaining = CACHE_TTL_SECONDS - (now - cached_time)
-            if remaining > 0 and cached.get("data", {}).get("rows"):
-                payload = cached["data"]
-                payload["cache_status"] = {
-                    "is_cached": True,
-                    "remaining_ttl_seconds": int(remaining),
-                    "cache_ttl_seconds": CACHE_TTL_SECONDS,
-                }
-                return payload
-        except Exception as e:
-            print(f"Error reading stock cache: {e}")
-
-    history_map = fetch_all_stock_history()
-    payload = calculate_stock_indicators(history_map)
-
-    if payload.get("rows"):
-        try:
-            with open(STOCK_CACHE_FILE, "w") as f:
-                json.dump({"cache_timestamp": now, "data": payload}, f, indent=2)
-        except Exception as e:
-            print(f"Error saving stock cache: {e}")
-    elif STOCK_CACHE_FILE.exists():
-        try:
-            with open(STOCK_CACHE_FILE, "r") as f:
-                cached = json.load(f)
-            cached_data = cached.get("data", {})
-            if cached_data.get("rows"):
-                print("Fresh stock fetch had empty rows; serving previously cached data.")
-                cached_data["cache_status"] = {
-                    "is_cached": True,
-                    "remaining_ttl_seconds": CACHE_TTL_SECONDS,
-                    "cache_ttl_seconds": CACHE_TTL_SECONDS,
-                }
-                with open(STOCK_CACHE_FILE, "w") as fw:
-                    json.dump({"cache_timestamp": now, "data": cached_data}, fw, indent=2)
-                return cached_data
-        except Exception as e:
-            print(f"Error reading fallback stock cache: {e}")
-
-    payload["cache_status"] = {
-        "is_cached": False,
-        "remaining_ttl_seconds": CACHE_TTL_SECONDS,
-        "cache_ttl_seconds": CACHE_TTL_SECONDS,
-    }
-    return payload
+    return load_or_refresh_cache(
+        cache_file=STOCK_CACHE_FILE,
+        ttl_seconds=CACHE_TTL_SECONDS,
+        fetch_fn=lambda: calculate_stock_indicators(fetch_all_stock_history()),
+        validate_fn=lambda d: bool(d.get("rows")),
+        force_refresh=force_refresh,
+    )
 
 
 if __name__ == "__main__":
