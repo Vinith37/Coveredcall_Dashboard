@@ -33,8 +33,6 @@ let initialPanY = 0;
 let strengthSortCol = 'score';
 let strengthSortAsc = false;
 let searchQuery = '';
-let filterTrend = 'ALL';
-let filterRsSignal = 'ALL';
 let sectorColFilters = {};
 
 // Stock Strength Screener State
@@ -43,8 +41,6 @@ let stockStrengthLoading = false;
 let stockSortCol = 'score';
 let stockSortDir = 'desc';
 let stockSearchQuery = '';
-let stockTrendFilter = 'ALL';
-let stockRsSignalFilter = 'ALL';
 let stockQuickPill = 'all';
 let stockColFilters = {};
 let lastFilteredStockRows = [];

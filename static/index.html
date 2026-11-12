@@ -330,28 +330,6 @@
           </div>
 
           <div class="filter-dropdowns">
-            <div class="filter-group">
-              <label>Trend Signal:</label>
-              <select id="filter-trend">
-                <option value="ALL">All Trends</option>
-                <option value="GREEN">Green (Bullish)</option>
-                <option value="YELLOW">Yellow (Moderate)</option>
-                <option value="RED">Red (Bearish)</option>
-                <option value="MARKET_WEAK">Market Weak</option>
-                <option value="HIGH_VOLATILITY">High Volatility</option>
-              </select>
-            </div>
-
-            <div class="filter-group">
-              <label>RS Signal:</label>
-              <select id="filter-rs-signal">
-                <option value="ALL">All Signals</option>
-                <option value="LEADER">Leader (&ge; 1.30)</option>
-                <option value="STRONG">Strong (&ge; 1.10)</option>
-                <option value="NEUTRAL">Neutral (&ge; 1.00)</option>
-                <option value="WEAK">Weak (&lt; 1.00)</option>
-              </select>
-            </div>
             <button class="btn-clear-all-filters" id="btn-clear-sector-col-filters" title="Clear all Excel column filters">
               <span>✕ Clear Column Filters</span>
             </button>
@@ -435,29 +413,6 @@
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
             <input type="text" id="stock-search-input" placeholder="Search by ticker (e.g. RELIANCE, TATAMOTORS, HDFCBANK)..." autocomplete="off">
             <button class="clear-search-btn" id="btn-clear-stock-search" title="Clear search" style="display:none;">&times;</button>
-          </div>
-
-          <div class="stock-filter-group">
-            <label>Trend:</label>
-            <select id="stock-filter-trend">
-              <option value="ALL">All Trends</option>
-              <option value="GREEN">Green (Bullish)</option>
-              <option value="YELLOW">Yellow (Pullback/Support)</option>
-              <option value="RED">Red (Lagging)</option>
-              <option value="HIGH_VOLATILITY">High Volatility (&gt;35%)</option>
-              <option value="MARKET_WEAK">Market Weak</option>
-            </select>
-          </div>
-
-          <div class="stock-filter-group">
-            <label>RS Signal:</label>
-            <select id="stock-filter-rs-signal">
-              <option value="ALL">All RS Signals</option>
-              <option value="LEADER">Leader (&ge; 1.30)</option>
-              <option value="STRONG">Strong (&ge; 1.10)</option>
-              <option value="NEUTRAL">Neutral (&ge; 1.00)</option>
-              <option value="WEAK">Weak (&lt; 1.00)</option>
-            </select>
           </div>
 
           <div class="stock-pills-wrap">
@@ -887,12 +842,12 @@
   </div>
 
   <!-- Modular Frontend Architecture -->
-  <script src="/static/js/state.js?v=20261112_v19"></script>
-  <script src="/static/js/excel-filter.js?v=20261112_v19"></script>
-  <script src="/static/js/kite-auth.js?v=20261112_v19"></script>
-  <script src="/static/js/rrg-canvas.js?v=20261112_v19"></script>
-  <script src="/static/js/screener.js?v=20261112_v19"></script>
-  <script src="/static/js/trade-library.js?v=20261112_v19"></script>
-  <script src="/static/app.js?v=20261112_v19"></script>
+  <script src="/static/js/state.js?v=20261112_v20"></script>
+  <script src="/static/js/excel-filter.js?v=20261112_v20"></script>
+  <script src="/static/js/kite-auth.js?v=20261112_v20"></script>
+  <script src="/static/js/rrg-canvas.js?v=20261112_v20"></script>
+  <script src="/static/js/screener.js?v=20261112_v20"></script>
+  <script src="/static/js/trade-library.js?v=20261112_v20"></script>
+  <script src="/static/app.js?v=20261112_v20"></script>
 </body>
 </html>

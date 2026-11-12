@@ -182,27 +182,11 @@ function initEventListeners() {
     renderStrengthTable();
   });
 
-  document.getElementById('filter-trend')?.addEventListener('change', (e) => {
-    filterTrend = e.target.value;
-    renderStrengthTable();
-  });
-
-  document.getElementById('filter-rs-signal')?.addEventListener('change', (e) => {
-    filterRsSignal = e.target.value;
-    renderStrengthTable();
-  });
-
   document.getElementById('btn-clear-sector-col-filters')?.addEventListener('click', () => {
     sectorColFilters = {};
     searchQuery = '';
-    filterTrend = 'ALL';
-    filterRsSignal = 'ALL';
     const sEl = document.getElementById('strength-search');
     if (sEl) sEl.value = '';
-    const tEl = document.getElementById('filter-trend');
-    if (tEl) tEl.value = 'ALL';
-    const rEl = document.getElementById('filter-rs-signal');
-    if (rEl) rEl.value = 'ALL';
     closeExcelFilterPopover();
     renderStrengthTable();
   });

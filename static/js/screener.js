@@ -19,12 +19,6 @@ function renderStrengthTable() {
       item.symbol.toLowerCase().includes(searchQuery)
     );
   }
-  if (filterTrend !== 'ALL') {
-    list = list.filter(item => item.trend === filterTrend);
-  }
-  if (filterRsSignal !== 'ALL') {
-    list = list.filter(item => item.rs_signal === filterRsSignal);
-  }
 
   list = list.filter(item => rowMatchesColFilters(item, sectorColFilters));
   updateColHeaderFilterIndicators('table-strength', sectorColFilters, 'btn-clear-sector-col-filters');
@@ -128,16 +122,6 @@ function setupStockStrengthListeners() {
     renderStockStrengthTable();
   });
 
-  document.getElementById('stock-filter-trend')?.addEventListener('change', (e) => {
-    stockTrendFilter = e.target.value;
-    renderStockStrengthTable();
-  });
-
-  document.getElementById('stock-filter-rs-signal')?.addEventListener('change', (e) => {
-    stockRsSignalFilter = e.target.value;
-    renderStockStrengthTable();
-  });
-
   bindPillGroup('.stock-pill', 'data-filter', (val) => {
     stockQuickPill = val;
     renderStockStrengthTable();
@@ -152,17 +136,11 @@ function setupStockStrengthListeners() {
   document.getElementById('btn-clear-stock-col-filters')?.addEventListener('click', () => {
     stockColFilters = {};
     stockSearchQuery = '';
-    stockTrendFilter = 'ALL';
-    stockRsSignalFilter = 'ALL';
     stockQuickPill = 'all';
     const searchInput = document.getElementById('stock-search-input');
     const clearBtn = document.getElementById('btn-clear-stock-search');
     if (searchInput) searchInput.value = '';
     if (clearBtn) clearBtn.style.display = 'none';
-    const tEl = document.getElementById('stock-filter-trend');
-    if (tEl) tEl.value = 'ALL';
-    const rEl = document.getElementById('stock-filter-rs-signal');
-    if (rEl) rEl.value = 'ALL';
     document.querySelectorAll('.stock-pill').forEach(p => p.classList.toggle('active', p.getAttribute('data-filter') === 'all'));
     closeExcelFilterPopover();
     renderStockStrengthTable();
@@ -181,12 +159,6 @@ function renderStockStrengthTable() {
 
   if (stockSearchQuery) {
     rows = rows.filter(r => (r.ticker && r.ticker.includes(stockSearchQuery)) || (r.symbol && r.symbol.includes(stockSearchQuery)));
-  }
-  if (stockTrendFilter !== 'ALL') {
-    rows = rows.filter(r => r.trend === stockTrendFilter);
-  }
-  if (stockRsSignalFilter !== 'ALL') {
-    rows = rows.filter(r => r.rs_signal === stockRsSignalFilter);
   }
 
   if (stockQuickPill === 'score5') {

@@ -1204,25 +1204,6 @@ body {
   flex-wrap: wrap;
 }
 
-.filter-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-}
-
-.filter-group select {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border-subtle);
-  color: #fff;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  outline: none;
-  cursor: pointer;
-  font-size: 0.78rem;
-}
-
 .matrix-counter {
   font-size: 0.75rem;
   color: var(--text-muted);
