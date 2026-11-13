@@ -20,9 +20,12 @@ from zoneinfo import ZoneInfo
 import requests
 from kiteconnect.exceptions import DataException, NetworkException, TokenException
 
+from config import NIFTY_KITE_SYMBOL
 from fno_db import fno_db
-from fno_indicators import calculate_indicators_df
+from fno_indicators import assign_rs_ratings, build_nifty_lookup, calculate_indicators_df
 from kite_service import kite_service
+
+NIFTY_50_INSTRUMENT_TOKEN = 256265
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -240,15 +243,35 @@ class FnoDataFetcher:
 
         return all_candles
 
+    def _fetch_nifty_lookup(self, kite, live_nifty_price: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
+        """Fetches Nifty 50 30M daily candles from Kite Connect to compute RS Value & Market Regime."""
+        end_dt = now_ist()
+        from_dt = end_dt - timedelta(days=HISTORICAL_DAYS)
+        candles = self._fetch_kite_daily_candles(kite, NIFTY_50_INSTRUMENT_TOKEN, from_dt, end_dt)
+        today_str = end_dt.strftime("%Y-%m-%d")
+        if live_nifty_price and live_nifty_price > 0:
+            candles = [c for c in candles if c["date"] != today_str]
+            candles.append({
+                "timestamp": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                "date": today_str,
+                "open": live_nifty_price,
+                "high": live_nifty_price,
+                "low": live_nifty_price,
+                "close": live_nifty_price,
+                "volume": 0,
+            })
+        return build_nifty_lookup(candles)
+
     def _sync_single_stock_history(
         self,
         kite,
         stock: Dict[str, Any],
         full_refresh: bool = False,
+        nifty_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> int:
         """
         Fetches either full 30-month history or incremental delta for one F&O stock,
-        computes technical indicators with trailing context, and upserts to SQLite.
+        computes technical & screener indicators with 250-bar lookback, and upserts to SQLite.
         """
         symbol = stock["symbol"]
         token = int(stock["instrument_token"])
@@ -262,8 +285,8 @@ class FnoDataFetcher:
             last_dt = datetime.strptime(last_date, "%Y-%m-%d").replace(tzinfo=IST)
             # Fetch a 7-day overlap so updated/incomplete candles are cleanly refreshed
             from_dt = max(cutoff_dt, last_dt - timedelta(days=7))
-            # Load trailing 60 bars from DB so 20 SMA / 14 RSI / 20D Vol have full lookback
-            existing_tail = fno_db.get_symbol_candles(symbol, limit=60)
+            # Load trailing 250 bars from DB so SMA 200 / 50D Breakout / 12M RS have full lookback
+            existing_tail = fno_db.get_symbol_candles(symbol, limit=250)
         else:
             from_dt = cutoff_dt
 
@@ -286,7 +309,7 @@ class FnoDataFetcher:
         for row in fetched:
             merged_map[row["timestamp"]] = row
 
-        enriched = calculate_indicators_df(list(merged_map.values()))
+        enriched = calculate_indicators_df(list(merged_map.values()), nifty_lookup=nifty_lookup)
         # Only upsert rows from `from_dt` onwards when incremental (or all when full)
         min_upsert_date = from_dt.strftime("%Y-%m-%d")
         to_save = [r for r in enriched if r["date"] >= min_upsert_date] if existing_tail else enriched
@@ -362,12 +385,15 @@ class FnoDataFetcher:
 
             if mode in ("historical", "incremental"):
                 full_refresh = mode == "historical"
+                with self._lock:
+                    self.progress["current_symbol"] = "NIFTY 50 Benchmark..."
+                nifty_lookup = self._fetch_nifty_lookup(kite)
                 for idx, stock in enumerate(universe, start=1):
                     sym = stock["symbol"]
                     with self._lock:
                         self.progress["current_symbol"] = sym
                     try:
-                        self._sync_single_stock_history(kite, stock, full_refresh=full_refresh)
+                        self._sync_single_stock_history(kite, stock, full_refresh=full_refresh, nifty_lookup=nifty_lookup)
                         success_count += 1
                     except Exception as exc:
                         failed_count += 1
@@ -379,15 +405,19 @@ class FnoDataFetcher:
                         self.progress["failed_count"] = failed_count
                         self.progress["errors"] = errors[-50:]
 
-                # Keep database strictly within 30 months
+                # Keep database strictly within 30 months & compute cross-sectional RS Ratings
                 cutoff_str = (now_ist() - timedelta(days=HISTORICAL_DAYS)).strftime("%Y-%m-%d")
                 fno_db.prune_older_than(cutoff_str)
+                fno_db.recompute_historical_rs_ratings()
 
             else:
                 # Snapshot mode (10AM, 1PM, 3PM, MANUAL)
                 with self._lock:
-                    self.progress["current_symbol"] = "Fetching batch live quotes..."
+                    self.progress["current_symbol"] = "Fetching batch live quotes & Nifty benchmark..."
                 quotes = self._fetch_batch_quotes(kite, universe)
+                nifty_q = self._call_with_retry(lambda: kite.quote([NIFTY_KITE_SYMBOL]))
+                live_nifty = float((nifty_q.get(NIFTY_KITE_SYMBOL) or {}).get("last_price") or 0.0) or None
+                nifty_lookup = self._fetch_nifty_lookup(kite, live_nifty_price=live_nifty)
 
                 ist_now = now_ist()
                 snap_date = ist_now.strftime("%Y-%m-%d")
@@ -411,11 +441,11 @@ class FnoDataFetcher:
                         high_p = float(ohlc.get("high") or ltp)
                         low_p = float(ohlc.get("low") or ltp)
 
-                        # Check trailing historical bars; backfill incrementally if missing
-                        hist_tail = fno_db.get_symbol_candles(sym, limit=60)
-                        if len(hist_tail) < 25:
-                            self._sync_single_stock_history(kite, stock, full_refresh=False)
-                            hist_tail = fno_db.get_symbol_candles(sym, limit=60)
+                        # Check trailing historical bars (250 bars needed for SMA 200 & 12M RS)
+                        hist_tail = fno_db.get_symbol_candles(sym, limit=250)
+                        if len(hist_tail) < 200:
+                            self._sync_single_stock_history(kite, stock, full_refresh=False, nifty_lookup=nifty_lookup)
+                            hist_tail = fno_db.get_symbol_candles(sym, limit=250)
 
                         # Combine trailing historical bars (prior to today) + current live intraday bar
                         combined = [
@@ -441,7 +471,7 @@ class FnoDataFetcher:
                             "volume": vol,
                         })
 
-                        enriched = calculate_indicators_df(combined)
+                        enriched = calculate_indicators_df(combined, nifty_lookup=nifty_lookup)
                         latest = enriched[-1]
                         snapshot_rows.append({
                             "snapshot_date": snap_date,
@@ -454,8 +484,18 @@ class FnoDataFetcher:
                             "close": latest["close"],
                             "volume": latest["volume"],
                             "sma20": latest["sma20"],
-                            "rsi14": latest["rsi14"],
+                            "sma50": latest["sma50"],
+                            "sma200": latest["sma200"],
+                            "trend": latest["trend"],
+                            "rs_value": latest["rs_value"],
+                            "rs_rating": latest["rs_rating"],
+                            "rs_signal": latest["rs_signal"],
+                            "vol20": latest["vol20"],
                             "rvol": latest["rvol"],
+                            "breakout_50d": latest["breakout_50d"],
+                            "accumulation": latest["accumulation"],
+                            "momentum_score": latest["momentum_score"],
+                            "rsi14": latest["rsi14"],
                             "volatility": latest["volatility"],
                             "extra_indicators": latest["extra_indicators"],
                             "fetched_at": fetched_at,
@@ -473,6 +513,7 @@ class FnoDataFetcher:
                         self.progress["errors"] = errors[-50:]
 
                 if snapshot_rows:
+                    assign_rs_ratings(snapshot_rows)
                     fno_db.upsert_snapshots(snapshot_rows)
 
             finished_at = now_ist().strftime("%Y-%m-%d %H:%M:%S IST")
@@ -617,3 +658,4 @@ class FnoDataFetcher:
 
 
 fno_fetcher = FnoDataFetcher()
+

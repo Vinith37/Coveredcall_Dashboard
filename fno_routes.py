@@ -24,8 +24,18 @@ CSV_HEADERS = [
     "Close",
     "Volume",
     "SMA_20",
-    "RSI_14",
+    "SMA_50",
+    "SMA_200",
+    "Trend_Signal",
+    "RS_Value",
+    "RS_Rating",
+    "RS_Signal",
+    "Vol_20",
     "RVOL",
+    "Breakout_50D",
+    "Accumulation",
+    "Momentum_Score",
+    "RSI_14",
     "Volatility_Pct",
     "Extra_Indicators",
 ]
@@ -36,24 +46,38 @@ class FnoFetchRequest(BaseModel):
     slot: str = "MANUAL"    # 'MANUAL' | '10AM' | '1PM' | '3PM'
 
 
+def _csv_val(v: Any) -> Any:
+    return "" if v is None else v
+
+
 def _rows_to_csv_response(rows: List[Dict[str, Any]], filename: str) -> StreamingResponse:
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(CSV_HEADERS)
     for r in rows:
         writer.writerow([
-            r.get("symbol", ""),
-            r.get("timestamp", ""),
-            r.get("open", ""),
-            r.get("high", ""),
-            r.get("low", ""),
-            r.get("close", ""),
-            r.get("volume", ""),
-            "" if r.get("sma20") is None else r.get("sma20"),
-            "" if r.get("rsi14") is None else r.get("rsi14"),
-            "" if r.get("rvol") is None else r.get("rvol"),
-            "" if r.get("volatility") is None else r.get("volatility"),
-            r.get("extra_indicators", ""),
+            _csv_val(r.get("symbol")),
+            _csv_val(r.get("timestamp")),
+            _csv_val(r.get("open")),
+            _csv_val(r.get("high")),
+            _csv_val(r.get("low")),
+            _csv_val(r.get("close")),
+            _csv_val(r.get("volume")),
+            _csv_val(r.get("sma20")),
+            _csv_val(r.get("sma50")),
+            _csv_val(r.get("sma200")),
+            _csv_val(r.get("trend")),
+            _csv_val(r.get("rs_value")),
+            _csv_val(r.get("rs_rating")),
+            _csv_val(r.get("rs_signal")),
+            _csv_val(r.get("vol20")),
+            _csv_val(r.get("rvol")),
+            _csv_val(r.get("breakout_50d")),
+            _csv_val(r.get("accumulation")),
+            _csv_val(r.get("momentum_score")),
+            _csv_val(r.get("rsi14")),
+            _csv_val(r.get("volatility")),
+            _csv_val(r.get("extra_indicators")),
         ])
     buf.seek(0)
     return StreamingResponse(
@@ -120,8 +144,18 @@ def get_fno_stocks(search: str = ""):
             "close": snap.get("close"),
             "volume": snap.get("volume"),
             "sma20": snap.get("sma20"),
-            "rsi14": snap.get("rsi14"),
+            "sma50": snap.get("sma50"),
+            "sma200": snap.get("sma200"),
+            "trend": snap.get("trend"),
+            "rs_value": snap.get("rs_value"),
+            "rs_rating": snap.get("rs_rating"),
+            "rs_signal": snap.get("rs_signal"),
+            "vol20": snap.get("vol20"),
             "rvol": snap.get("rvol"),
+            "breakout_50d": snap.get("breakout_50d"),
+            "accumulation": snap.get("accumulation"),
+            "momentum_score": snap.get("momentum_score"),
+            "rsi14": snap.get("rsi14"),
             "volatility": snap.get("volatility"),
             "slot": snap.get("slot"),
         })
@@ -177,3 +211,4 @@ def export_all_historical_csv():
         )
     filename = f"FNO_Historical_30M_All_{now_ist().strftime('%Y-%m-%d')}.csv"
     return _rows_to_csv_response(rows, filename)
+

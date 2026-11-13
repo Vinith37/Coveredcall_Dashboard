@@ -768,7 +768,7 @@
               <span class="fno-section-tag">F</span>
               <h3>CSV Export &amp; Downloads</h3>
             </div>
-            <span class="fno-hint-inline">Consistent schema: Symbol, Timestamp, Open, High, Low, Close, Volume, SMA_20, RSI_14, RVOL, Volatility_Pct</span>
+            <span class="fno-hint-inline">22 CSV Columns: Symbol, Timestamp, OHLCV, SMA 20/50/200, Trend Signal, RS Value/Rating/Signal, Vol 20, RVOL, 50D Breakout, Accumulation, Momentum, RSI 14, Volatility %</span>
           </div>
           <div class="fno-downloads-grid">
             <div class="fno-download-box">
@@ -824,22 +824,32 @@
               <table class="data-table stock-table" id="table-fno-preview">
                 <thead>
                   <tr>
-                    <th>Symbol</th>
-                    <th>Timestamp</th>
+                    <th>Ticker</th>
+                    <th>Updated</th>
                     <th class="num">Open</th>
                     <th class="num">High</th>
                     <th class="num">Low</th>
                     <th class="num">Close</th>
-                    <th class="num">Volume</th>
-                    <th class="num">20 SMA</th>
-                    <th class="num">RSI (14)</th>
+                    <th class="num">SMA 20</th>
+                    <th class="num">SMA 50</th>
+                    <th class="num">SMA 200</th>
+                    <th>Trend Signal</th>
+                    <th class="num">RS Value</th>
+                    <th class="num">RS Rating</th>
+                    <th>RS Signal</th>
+                    <th class="num">Vol Today</th>
+                    <th class="num">Vol 20</th>
                     <th class="num">RVOL</th>
+                    <th>50D Breakout</th>
+                    <th>Accumulation</th>
+                    <th>Momentum</th>
+                    <th class="num">RSI (14)</th>
                     <th class="num">Volatility %</th>
                     <th style="text-align:center;">CSV</th>
                   </tr>
                 </thead>
                 <tbody id="tbody-fno-preview">
-                  <tr><td colspan="12" style="text-align:center; padding:32px; color:var(--text-muted);">No F&amp;O dataset fetched yet. Connect Kite &amp; click <strong>Manual Fetch Snapshot</strong> or <strong>Refresh 30M History</strong>.</td></tr>
+                  <tr><td colspan="22" style="text-align:center; padding:32px; color:var(--text-muted);">No F&amp;O dataset fetched yet. Connect Kite &amp; click <strong>Manual Fetch Snapshot</strong> or <strong>Refresh 30M History</strong>.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1080,13 +1090,13 @@
   </div>
 
   <!-- Modular Frontend Architecture -->
-  <script src="/static/js/state.js?v=20261113_v21"></script>
-  <script src="/static/js/excel-filter.js?v=20261113_v21"></script>
-  <script src="/static/js/kite-auth.js?v=20261113_v21"></script>
-  <script src="/static/js/rrg-canvas.js?v=20261113_v21"></script>
-  <script src="/static/js/screener.js?v=20261113_v21"></script>
-  <script src="/static/js/trade-library.js?v=20261113_v21"></script>
-  <script src="/static/js/data-fetching.js?v=20261113_v21"></script>
-  <script src="/static/app.js?v=20261113_v21"></script>
+  <script src="/static/js/state.js?v=20261113_v22"></script>
+  <script src="/static/js/excel-filter.js?v=20261113_v22"></script>
+  <script src="/static/js/kite-auth.js?v=20261113_v22"></script>
+  <script src="/static/js/rrg-canvas.js?v=20261113_v22"></script>
+  <script src="/static/js/screener.js?v=20261113_v22"></script>
+  <script src="/static/js/trade-library.js?v=20261113_v22"></script>
+  <script src="/static/js/data-fetching.js?v=20261113_v22"></script>
+  <script src="/static/app.js?v=20261113_v22"></script>
 </body>
 </html>

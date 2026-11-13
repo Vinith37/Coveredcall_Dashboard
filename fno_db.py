@@ -61,8 +61,18 @@ class FnoDatabase:
                     close REAL NOT NULL,
                     volume INTEGER NOT NULL,
                     sma20 REAL,
-                    rsi14 REAL,
+                    sma50 REAL,
+                    sma200 REAL,
+                    trend TEXT,
+                    rs_value REAL,
+                    rs_rating INTEGER,
+                    rs_signal TEXT,
+                    vol20 INTEGER,
                     rvol REAL,
+                    breakout_50d TEXT,
+                    accumulation TEXT,
+                    momentum_score INTEGER,
+                    rsi14 REAL,
                     volatility REAL,
                     extra_indicators TEXT,
                     updated_at TEXT NOT NULL,
@@ -86,8 +96,18 @@ class FnoDatabase:
                     close REAL NOT NULL,
                     volume INTEGER NOT NULL,
                     sma20 REAL,
-                    rsi14 REAL,
+                    sma50 REAL,
+                    sma200 REAL,
+                    trend TEXT,
+                    rs_value REAL,
+                    rs_rating INTEGER,
+                    rs_signal TEXT,
+                    vol20 INTEGER,
                     rvol REAL,
+                    breakout_50d TEXT,
+                    accumulation TEXT,
+                    momentum_score INTEGER,
+                    rsi14 REAL,
                     volatility REAL,
                     extra_indicators TEXT,
                     fetched_at TEXT NOT NULL,
@@ -113,6 +133,23 @@ class FnoDatabase:
                 );
                 """
             )
+            extra_cols = [
+                ("sma50", "REAL"),
+                ("sma200", "REAL"),
+                ("trend", "TEXT"),
+                ("rs_value", "REAL"),
+                ("rs_rating", "INTEGER"),
+                ("rs_signal", "TEXT"),
+                ("vol20", "INTEGER"),
+                ("breakout_50d", "TEXT"),
+                ("accumulation", "TEXT"),
+                ("momentum_score", "INTEGER"),
+            ]
+            for tbl in ("historical_candles", "scheduled_snapshots"):
+                existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()}
+                for col_name, col_type in extra_cols:
+                    if col_name not in existing:
+                        conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col_name} {col_type};")
 
     # ── F&O Universe ──────────────────────────────────────────────────────
     def replace_universe(self, stocks: List[Dict[str, Any]], updated_at: str) -> int:
@@ -162,10 +199,14 @@ class FnoDatabase:
             ).fetchone()
         return row["max_date"] if row and row["max_date"] else None
 
+    _METRIC_COLS = (
+        "sma20, sma50, sma200, trend, rs_value, rs_rating, rs_signal, "
+        "vol20, rvol, breakout_50d, accumulation, momentum_score, rsi14, volatility, extra_indicators"
+    )
+
     def get_symbol_candles(self, symbol: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        query = """
-            SELECT symbol, timestamp, date, open, high, low, close, volume,
-                   sma20, rsi14, rvol, volatility, extra_indicators
+        query = f"""
+            SELECT symbol, timestamp, date, open, high, low, close, volume, {self._METRIC_COLS}
             FROM historical_candles
             WHERE symbol = ?
             ORDER BY timestamp ASC
@@ -173,8 +214,7 @@ class FnoDatabase:
         if limit:
             query = f"""
                 SELECT * FROM (
-                    SELECT symbol, timestamp, date, open, high, low, close, volume,
-                           sma20, rsi14, rvol, volatility, extra_indicators
+                    SELECT symbol, timestamp, date, open, high, low, close, volume, {self._METRIC_COLS}
                     FROM historical_candles
                     WHERE symbol = ?
                     ORDER BY timestamp DESC
@@ -190,12 +230,12 @@ class FnoDatabase:
             return 0
         with self._connect() as conn:
             conn.executemany(
-                """
+                f"""
                 INSERT INTO historical_candles (
                     symbol, timestamp, date, open, high, low, close, volume,
-                    sma20, rsi14, rvol, volatility, extra_indicators, updated_at
+                    {self._METRIC_COLS}, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, timestamp) DO UPDATE SET
                     open = excluded.open,
                     high = excluded.high,
@@ -203,8 +243,18 @@ class FnoDatabase:
                     close = excluded.close,
                     volume = excluded.volume,
                     sma20 = excluded.sma20,
-                    rsi14 = excluded.rsi14,
+                    sma50 = excluded.sma50,
+                    sma200 = excluded.sma200,
+                    trend = excluded.trend,
+                    rs_value = excluded.rs_value,
+                    rs_rating = COALESCE(excluded.rs_rating, historical_candles.rs_rating),
+                    rs_signal = excluded.rs_signal,
+                    vol20 = excluded.vol20,
                     rvol = excluded.rvol,
+                    breakout_50d = excluded.breakout_50d,
+                    accumulation = excluded.accumulation,
+                    momentum_score = excluded.momentum_score,
+                    rsi14 = excluded.rsi14,
                     volatility = excluded.volatility,
                     extra_indicators = excluded.extra_indicators,
                     updated_at = excluded.updated_at
@@ -220,8 +270,18 @@ class FnoDatabase:
                         r["close"],
                         r["volume"],
                         r.get("sma20"),
-                        r.get("rsi14"),
+                        r.get("sma50"),
+                        r.get("sma200"),
+                        r.get("trend"),
+                        r.get("rs_value"),
+                        r.get("rs_rating"),
+                        r.get("rs_signal"),
+                        r.get("vol20"),
                         r.get("rvol"),
+                        r.get("breakout_50d"),
+                        r.get("accumulation"),
+                        r.get("momentum_score"),
+                        r.get("rsi14"),
                         r.get("volatility"),
                         r.get("extra_indicators"),
                         updated_at,
@@ -230,6 +290,30 @@ class FnoDatabase:
                 ],
             )
         return len(rows)
+
+    def recompute_historical_rs_ratings(self) -> None:
+        """Computes cross-sectional RS Rating (1..100) per date across all historical candles."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                WITH ranked AS (
+                    SELECT symbol, timestamp,
+                           ROUND(
+                             (CAST(ROW_NUMBER() OVER (PARTITION BY date ORDER BY rs_value ASC) AS REAL)
+                              / NULLIF(COUNT(*) OVER (PARTITION BY date), 0)) * 99 + 1
+                           ) AS calc_rating
+                    FROM historical_candles
+                    WHERE rs_value IS NOT NULL
+                )
+                UPDATE historical_candles
+                SET rs_rating = (
+                    SELECT calc_rating FROM ranked
+                    WHERE ranked.symbol = historical_candles.symbol
+                      AND ranked.timestamp = historical_candles.timestamp
+                )
+                WHERE rs_value IS NOT NULL;
+                """
+            )
 
     def prune_older_than(self, cutoff_date: str) -> int:
         """Keeps historical dataset bounded to the latest 30 months."""
@@ -259,9 +343,8 @@ class FnoDatabase:
         with self._connect() as conn:
             if symbol:
                 rows = conn.execute(
-                    """
-                    SELECT symbol, timestamp, date, open, high, low, close, volume,
-                           sma20, rsi14, rvol, volatility, extra_indicators
+                    f"""
+                    SELECT symbol, timestamp, date, open, high, low, close, volume, {self._METRIC_COLS}
                     FROM historical_candles
                     WHERE symbol = ?
                     ORDER BY timestamp ASC
@@ -270,9 +353,8 @@ class FnoDatabase:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    """
-                    SELECT symbol, timestamp, date, open, high, low, close, volume,
-                           sma20, rsi14, rvol, volatility, extra_indicators
+                    f"""
+                    SELECT symbol, timestamp, date, open, high, low, close, volume, {self._METRIC_COLS}
                     FROM historical_candles
                     ORDER BY symbol ASC, timestamp ASC
                     """
@@ -285,13 +367,13 @@ class FnoDatabase:
             return 0
         with self._connect() as conn:
             conn.executemany(
-                """
+                f"""
                 INSERT INTO scheduled_snapshots (
                     snapshot_date, slot, symbol, timestamp,
                     open, high, low, close, volume,
-                    sma20, rsi14, rvol, volatility, extra_indicators, fetched_at
+                    {self._METRIC_COLS}, fetched_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(snapshot_date, slot, symbol) DO UPDATE SET
                     timestamp = excluded.timestamp,
                     open = excluded.open,
@@ -300,8 +382,18 @@ class FnoDatabase:
                     close = excluded.close,
                     volume = excluded.volume,
                     sma20 = excluded.sma20,
-                    rsi14 = excluded.rsi14,
+                    sma50 = excluded.sma50,
+                    sma200 = excluded.sma200,
+                    trend = excluded.trend,
+                    rs_value = excluded.rs_value,
+                    rs_rating = excluded.rs_rating,
+                    rs_signal = excluded.rs_signal,
+                    vol20 = excluded.vol20,
                     rvol = excluded.rvol,
+                    breakout_50d = excluded.breakout_50d,
+                    accumulation = excluded.accumulation,
+                    momentum_score = excluded.momentum_score,
+                    rsi14 = excluded.rsi14,
                     volatility = excluded.volatility,
                     extra_indicators = excluded.extra_indicators,
                     fetched_at = excluded.fetched_at
@@ -318,8 +410,18 @@ class FnoDatabase:
                         r["close"],
                         r["volume"],
                         r.get("sma20"),
-                        r.get("rsi14"),
+                        r.get("sma50"),
+                        r.get("sma200"),
+                        r.get("trend"),
+                        r.get("rs_value"),
+                        r.get("rs_rating"),
+                        r.get("rs_signal"),
+                        r.get("vol20"),
                         r.get("rvol"),
+                        r.get("breakout_50d"),
+                        r.get("accumulation"),
+                        r.get("momentum_score"),
+                        r.get("rsi14"),
                         r.get("volatility"),
                         r.get("extra_indicators"),
                         r["fetched_at"],
@@ -352,12 +454,12 @@ class FnoDatabase:
         return [dict(r) for r in rows]
 
     def get_snapshot_rows(self, snapshot_date: Optional[str] = None, slot: Optional[str] = None) -> List[Dict[str, Any]]:
+        snap_select = f"snapshot_date, slot, symbol, timestamp, open, high, low, close, volume, {self._METRIC_COLS}, fetched_at"
         with self._connect() as conn:
             if snapshot_date and slot:
                 rows = conn.execute(
-                    """
-                    SELECT snapshot_date, slot, symbol, timestamp, open, high, low, close, volume,
-                           sma20, rsi14, rvol, volatility, extra_indicators, fetched_at
+                    f"""
+                    SELECT {snap_select}
                     FROM scheduled_snapshots
                     WHERE snapshot_date = ? AND slot = ?
                     ORDER BY symbol ASC
@@ -365,7 +467,6 @@ class FnoDatabase:
                     (snapshot_date, slot),
                 ).fetchall()
             elif slot:
-                # Latest date for that slot
                 latest = conn.execute(
                     "SELECT MAX(snapshot_date) AS d FROM scheduled_snapshots WHERE slot = ?",
                     (slot,),
@@ -373,9 +474,8 @@ class FnoDatabase:
                 if not latest or not latest["d"]:
                     return []
                 rows = conn.execute(
-                    """
-                    SELECT snapshot_date, slot, symbol, timestamp, open, high, low, close, volume,
-                           sma20, rsi14, rvol, volatility, extra_indicators, fetched_at
+                    f"""
+                    SELECT {snap_select}
                     FROM scheduled_snapshots
                     WHERE snapshot_date = ? AND slot = ?
                     ORDER BY symbol ASC
@@ -383,15 +483,13 @@ class FnoDatabase:
                     (latest["d"], slot),
                 ).fetchall()
             else:
-                # Latest snapshot across any slot, or latest daily candles if no snapshot yet
                 latest = conn.execute(
                     "SELECT snapshot_date, slot FROM scheduled_snapshots ORDER BY fetched_at DESC LIMIT 1"
                 ).fetchone()
                 if latest:
                     rows = conn.execute(
-                        """
-                        SELECT snapshot_date, slot, symbol, timestamp, open, high, low, close, volume,
-                               sma20, rsi14, rvol, volatility, extra_indicators, fetched_at
+                        f"""
+                        SELECT {snap_select}
                         FROM scheduled_snapshots
                         WHERE snapshot_date = ? AND slot = ?
                         ORDER BY symbol ASC
@@ -399,11 +497,12 @@ class FnoDatabase:
                         (latest["snapshot_date"], latest["slot"]),
                     ).fetchall()
                 else:
+                    h_cols = ", ".join(f"h.{c.strip()}" for c in self._METRIC_COLS.split(","))
                     rows = conn.execute(
-                        """
+                        f"""
                         SELECT h.date AS snapshot_date, 'HIST' AS slot, h.symbol, h.timestamp,
                                h.open, h.high, h.low, h.close, h.volume,
-                               h.sma20, h.rsi14, h.rvol, h.volatility, h.extra_indicators, h.updated_at AS fetched_at
+                               {h_cols}, h.updated_at AS fetched_at
                         FROM historical_candles h
                         INNER JOIN (
                             SELECT symbol, MAX(timestamp) AS max_ts FROM historical_candles GROUP BY symbol
@@ -466,3 +565,4 @@ class FnoDatabase:
 
 
 fno_db = FnoDatabase()
+

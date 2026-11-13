@@ -303,29 +303,65 @@ function renderFnoPreviewTable() {
   if (counter) counter.textContent = `${filtered.length} stocks`;
 
   if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center; padding:32px; color:var(--text-muted);">No F&amp;O records match your filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="22" style="text-align:center; padding:32px; color:var(--text-muted);">No F&amp;O records match your filter.</td></tr>`;
     return;
   }
 
   const fmtNum = (v, d = 2) => (v === null || v === undefined ? '—' : Number(v).toFixed(d));
-  tbody.innerHTML = filtered.slice(0, 250).map(r => `
-    <tr>
-      <td class="stock-ticker-cell"><span class="stock-sym-badge">${r.symbol}</span></td>
-      <td class="font-mono" style="font-size:0.74rem; color:var(--text-muted);">${r.timestamp || '—'}</td>
-      <td class="num font-mono">${r.open != null ? fmtINR(r.open) : '—'}</td>
-      <td class="num font-mono">${r.high != null ? fmtINR(r.high) : '—'}</td>
-      <td class="num font-mono">${r.low != null ? fmtINR(r.low) : '—'}</td>
-      <td class="num font-mono" style="font-weight:700; color:#fff;">${r.close != null ? fmtINR(r.close) : '—'}</td>
-      <td class="num font-mono">${r.volume != null ? fmtInt(r.volume) : '—'}</td>
-      <td class="num font-mono">${r.sma20 != null ? fmtINR(r.sma20) : '—'}</td>
-      <td class="num font-mono">${fmtNum(r.rsi14)}</td>
-      <td class="num font-mono">${r.rvol != null ? fmtNum(r.rvol) + 'x' : '—'}</td>
-      <td class="num font-mono">${r.volatility != null ? fmtNum(r.volatility) + '%' : '—'}</td>
-      <td style="text-align:center;">
-        <button class="btn btn-sm btn-outline" style="padding:2px 8px; font-size:0.68rem;" onclick="triggerCsvDownload('/api/fno/export/stock/${r.symbol}')">
-          ⬇ CSV
-        </button>
-      </td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = filtered.slice(0, 250).map(r => {
+    const mapped = {
+      sma20: r.sma20,
+      sma50: r.sma50,
+      sma200: r.sma200,
+      trend: r.trend,
+      rs_score: r.rs_value,
+      rs_rating: r.rs_rating,
+      rs_signal: r.rs_signal,
+      vol_today: r.volume,
+      vol20: r.vol20,
+      rvol: r.rvol,
+      breakout: r.breakout_50d,
+      accumulation: r.accumulation,
+      score: r.momentum_score,
+      volatility: r.volatility,
+    };
+    const trendHtml = r.trend ? `<span class="badge-trend ${r.trend}">${r.trend.replace('_', ' ')}</span>` : '—';
+    const rsSigHtml = r.rs_signal ? `<span class="badge-rs ${r.rs_signal}">${r.rs_signal}</span>` : '—';
+    const rsTier = r.rs_rating != null ? getRsRatingTier(r.rs_rating) : '';
+    const rsRatingHtml = r.rs_rating != null ? `<span class="rs-rating-badge ${rsTier}">${r.rs_rating}</span>` : '—';
+    const breakHtml = r.breakout_50d === 'YES' ? '<span class="badge-breakout">YES</span>' : '<span style="opacity:0.3;">—</span>';
+    const accumHtml = r.accumulation === 'ACCUMULATION' ? '<span class="badge-accum">ACCUM</span>' : '<span style="opacity:0.3;">—</span>';
+
+    return `
+      <tr>
+        <td class="stock-ticker-cell"><span class="stock-sym-badge">${r.symbol}</span></td>
+        <td class="font-mono" style="font-size:0.74rem; color:var(--text-muted);">${r.timestamp || '—'}</td>
+        <td class="num font-mono">${r.open != null ? fmtINR(r.open) : '—'}</td>
+        <td class="num font-mono">${r.high != null ? fmtINR(r.high) : '—'}</td>
+        <td class="num font-mono">${r.low != null ? fmtINR(r.low) : '—'}</td>
+        <td class="num font-mono" style="font-weight:700; color:#fff;">${r.close != null ? fmtINR(r.close) : '—'}</td>
+        <td class="num font-mono">${r.sma20 != null ? fmtINR(r.sma20) : '—'}</td>
+        <td class="num font-mono">${r.sma50 != null ? fmtINR(r.sma50) : '—'}</td>
+        <td class="num font-mono">${r.sma200 != null ? fmtINR(r.sma200) : '—'}</td>
+        <td>${trendHtml}</td>
+        <td class="num font-mono">${mapped.rs_score != null ? Number(mapped.rs_score).toFixed(3) : '—'}</td>
+        <td class="num">${rsRatingHtml}</td>
+        <td>${rsSigHtml}</td>
+        <td class="num font-mono">${r.volume != null ? fmtInt(r.volume) : '—'}</td>
+        <td class="num font-mono">${r.vol20 != null ? fmtInt(r.vol20) : '—'}</td>
+        <td class="num font-mono">${r.rvol != null ? fmtNum(r.rvol) + 'x' : '—'}</td>
+        <td style="text-align:center;">${breakHtml}</td>
+        <td style="text-align:center;">${accumHtml}</td>
+        <td>${renderScorePips(r.momentum_score || 0)}</td>
+        <td class="num font-mono">${fmtNum(r.rsi14)}</td>
+        <td class="num font-mono">${r.volatility != null ? fmtNum(r.volatility, 1) + '%' : '—'}</td>
+        <td style="text-align:center;">
+          <button class="btn btn-sm btn-outline" style="padding:2px 8px; font-size:0.68rem;" onclick="triggerCsvDownload('/api/fno/export/stock/${r.symbol}')">
+            ⬇ CSV
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
+
