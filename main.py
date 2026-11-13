@@ -1,5 +1,6 @@
 import json
 import os
+from contextlib import asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -12,14 +13,28 @@ from pydantic import BaseModel
 import engine
 import stock_engine
 from config import BASE_DIR, SESSION_FILE
+from fno_fetcher import fno_fetcher
+from fno_routes import router as fno_router
 from kite_service import kite_service
 from trade_store import extract_indicator_snapshot, trade_store
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    fno_fetcher.start_scheduler()
+    try:
+        yield
+    finally:
+        fno_fetcher.stop_scheduler()
+
+
 app = FastAPI(
     title="Kite Pulse — Institutional Sector & Stock Strength Engine",
-    description="Relative Strength, RRG Visualizer, Stock Screener & Trade Library powered by Zerodha Kite Connect & Zero-Token Caching",
-    version="2.0.0",
+    description="Relative Strength, RRG Visualizer, Stock Screener, Trade Library & F&O Data Fetching powered by Zerodha Kite Connect",
+    version="2.1.0",
+    lifespan=lifespan,
 )
+app.include_router(fno_router)
 
 
 @app.middleware("http")

@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   fetchData();
   initStockStrength();
   initTradeLibrary();
+  initDataFetching();
 });
 
 function initEventListeners() {
@@ -75,6 +76,8 @@ function initEventListeners() {
         ensureStockStrengthLoaded();
       } else if (targetTab === 'tab-library') {
         ensureTradeLibraryLoaded();
+      } else if (targetTab === 'tab-data-fetching') {
+        ensureDataFetchingLoaded();
       }
     });
   });

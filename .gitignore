@@ -2,10 +2,11 @@
 .env
 kite_session.json
 
-# Local Runtime Cache
+# Local Runtime Cache & Database
 cache_data.json
 stock_strength_cache.json
 trades_library.json
+fno_market_data.db*
 
 # Python Bytecode & Virtual Environments
 __pycache__/
