@@ -31,6 +31,7 @@ class FnoDatabase:
         self.db_path = db_path
         self._lock = threading.RLock()
         self._init_schema()
+        self.mark_stale_running_logs()
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
@@ -625,6 +626,18 @@ class FnoDatabase:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def mark_stale_running_logs(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE fetch_logs
+                SET status = 'INTERRUPTED',
+                    finished_at = started_at,
+                    message = COALESCE(message, '') || ' (Interrupted by server reload)'
+                WHERE status = 'RUNNING'
+                """
+            )
 
     # ── Configurable Schedule Slots ───────────────────────────────────────
     def get_schedule_slots(self) -> List[Dict[str, Any]]:

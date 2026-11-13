@@ -197,6 +197,10 @@ async function runCustomFetch() {
     btn.disabled = true;
     btn.textContent = symbol === 'ALL' ? 'Starting...' : `Fetching ${symbol}...`;
   }
+  const msgEl = document.getElementById('fno-last-message');
+  const curEl = document.getElementById('fno-current-stock');
+  if (msgEl) msgEl.textContent = `Fetching ${symbol} (${fnoSelectedTimeframe})...`;
+  if (curEl) curEl.textContent = symbol;
 
   try {
     const res = await fetch('/api/fno/custom/fetch', {
@@ -244,6 +248,7 @@ function downloadCustomCsv() {
 function triggerCsvDownload(url) {
   showToast('Preparing CSV download...');
   window.location.href = url;
+  setTimeout(fetchFnoStatus, 1800);
 }
 
 function renderFnoStatus(data) {

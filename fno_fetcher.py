@@ -880,76 +880,149 @@ class FnoDataFetcher:
         clean_sym = symbol.strip().upper().replace(".NS", "")
         days_back = self.TIMEFRAME_DAYS.get(timeframe.upper(), 30)
         intraday_slots, want_daily, want_live = self.parse_timestamp_selections(timestamps)
+        slot_label = ",".join(timestamps) if timestamps else timeframe
 
-        kite = self._require_kite()
-        universe = self.ensure_universe()
-        stock = next((s for s in universe if s["symbol"] == clean_sym), None)
-        if not stock:
-            raise ValueError(f"Symbol '{clean_sym}' not found in NSE F&O universe.")
+        job_id = f"fno_{uuid.uuid4().hex[:8]}"
+        started_at = now_ist().strftime("%Y-%m-%d %H:%M:%S IST")
+        log_id = fno_db.insert_log(
+            job_id=job_id,
+            started_at=started_at,
+            slot=timeframe.upper(),
+            mode=clean_sym,
+            total_stocks=1,
+            status="RUNNING",
+            message=f"Fetching {clean_sym} ({timeframe}, {slot_label})...",
+        )
+        with self._lock:
+            self.progress.update({
+                "is_running": True,
+                "job_id": job_id,
+                "mode": clean_sym,
+                "slot": timeframe.upper(),
+                "total": 1,
+                "processed": 0,
+                "progress_pct": 10.0,
+                "current_symbol": clean_sym,
+                "success_count": 0,
+                "failed_count": 0,
+                "errors": [],
+                "started_at": started_at,
+                "finished_at": None,
+                "last_message": f"Fetching {clean_sym} ({timeframe})...",
+            })
 
-        nifty_lookup = self._fetch_nifty_lookup(kite)
-        if want_daily or intraday_slots:
-            self._sync_single_stock_history(kite, stock, full_refresh=False, nifty_lookup=nifty_lookup)
+        try:
+            kite = self._require_kite()
+            universe = self.ensure_universe()
+            stock = next((s for s in universe if s["symbol"] == clean_sym), None)
+            if not stock:
+                raise ValueError(f"Symbol '{clean_sym}' not found in NSE F&O universe.")
 
-        inserted = 0
-        if intraday_slots:
-            built = self._backfill_stock_intraday_slots(
-                kite, stock, slots=intraday_slots, nifty_lookup=nifty_lookup, days_back=days_back
+            nifty_lookup = self._fetch_nifty_lookup(kite)
+            daily_count = 0
+            if want_daily or intraday_slots:
+                daily_count = self._sync_single_stock_history(kite, stock, full_refresh=False, nifty_lookup=nifty_lookup)
+
+            inserted = 0
+            if intraday_slots:
+                built = self._backfill_stock_intraday_slots(
+                    kite, stock, slots=intraday_slots, nifty_lookup=nifty_lookup, days_back=days_back
+                )
+                if built:
+                    fno_db.upsert_snapshots(built)
+                    inserted += len(built)
+
+            if want_live:
+                quotes = self._fetch_batch_quotes(kite, [stock])
+                q = quotes.get(clean_sym)
+                if q:
+                    ist_now = now_ist()
+                    snap_date = ist_now.strftime("%Y-%m-%d")
+                    snap_ts = ist_now.strftime("%Y-%m-%d %H:%M:%S")
+                    ohlc = q.get("ohlc") or {}
+                    ltp = float(q.get("last_price") or ohlc.get("close") or 0.0)
+                    hist_tail = [r for r in fno_db.get_symbol_candles(clean_sym, limit=250) if r["date"] < snap_date]
+                    hist_tail.append({
+                        "timestamp": snap_ts,
+                        "date": snap_date,
+                        "open": float(ohlc.get("open") or ltp),
+                        "high": float(ohlc.get("high") or ltp),
+                        "low": float(ohlc.get("low") or ltp),
+                        "close": ltp,
+                        "volume": int(q.get("volume") or 0),
+                    })
+                    latest = calculate_indicators_df(hist_tail, nifty_lookup=nifty_lookup)[-1]
+                    fno_db.upsert_snapshots([{
+                        "snapshot_date": snap_date,
+                        "slot": "MANUAL",
+                        "symbol": clean_sym,
+                        "timestamp": snap_ts,
+                        "open": latest["open"],
+                        "high": latest["high"],
+                        "low": latest["low"],
+                        "close": latest["close"],
+                        "volume": latest["volume"],
+                        "sma20": latest["sma20"],
+                        "sma50": latest["sma50"],
+                        "sma200": latest["sma200"],
+                        "trend": latest["trend"],
+                        "rs_value": latest["rs_value"],
+                        "rs_rating": latest["rs_rating"],
+                        "rs_signal": latest["rs_signal"],
+                        "vol20": latest["vol20"],
+                        "rvol": latest["rvol"],
+                        "breakout_50d": latest["breakout_50d"],
+                        "accumulation": latest["accumulation"],
+                        "momentum_score": latest["momentum_score"],
+                        "rsi14": latest["rsi14"],
+                        "volatility": latest["volatility"],
+                        "extra_indicators": latest["extra_indicators"],
+                        "fetched_at": ist_now.strftime("%Y-%m-%d %H:%M:%S IST"),
+                    }])
+                    inserted += 1
+
+            finished_at = now_ist().strftime("%Y-%m-%d %H:%M:%S IST")
+            total_updated = inserted if inserted > 0 else daily_count
+            msg = f"Completed {clean_sym} ({timeframe}, {slot_label}): {total_updated} rows synced."
+            fno_db.update_log(
+                log_id=log_id, finished_at=finished_at, total_stocks=1,
+                success_count=1, failed_count=0, status="SUCCESS", message=msg,
             )
-            if built:
-                fno_db.upsert_snapshots(built)
-                inserted += len(built)
-
-        if want_live:
-            quotes = self._fetch_batch_quotes(kite, [stock])
-            q = quotes.get(clean_sym)
-            if q:
-                ist_now = now_ist()
-                snap_date = ist_now.strftime("%Y-%m-%d")
-                snap_ts = ist_now.strftime("%Y-%m-%d %H:%M:%S")
-                ohlc = q.get("ohlc") or {}
-                ltp = float(q.get("last_price") or ohlc.get("close") or 0.0)
-                hist_tail = [r for r in fno_db.get_symbol_candles(clean_sym, limit=250) if r["date"] < snap_date]
-                hist_tail.append({
-                    "timestamp": snap_ts,
-                    "date": snap_date,
-                    "open": float(ohlc.get("open") or ltp),
-                    "high": float(ohlc.get("high") or ltp),
-                    "low": float(ohlc.get("low") or ltp),
-                    "close": ltp,
-                    "volume": int(q.get("volume") or 0),
+            with self._lock:
+                self.progress.update({
+                    "is_running": False,
+                    "processed": 1,
+                    "progress_pct": 100.0,
+                    "current_symbol": None,
+                    "success_count": 1,
+                    "failed_count": 0,
+                    "finished_at": finished_at,
+                    "last_message": msg,
                 })
-                latest = calculate_indicators_df(hist_tail, nifty_lookup=nifty_lookup)[-1]
-                fno_db.upsert_snapshots([{
-                    "snapshot_date": snap_date,
-                    "slot": "MANUAL",
-                    "symbol": clean_sym,
-                    "timestamp": snap_ts,
-                    "open": latest["open"],
-                    "high": latest["high"],
-                    "low": latest["low"],
-                    "close": latest["close"],
-                    "volume": latest["volume"],
-                    "sma20": latest["sma20"],
-                    "sma50": latest["sma50"],
-                    "sma200": latest["sma200"],
-                    "trend": latest["trend"],
-                    "rs_value": latest["rs_value"],
-                    "rs_rating": latest["rs_rating"],
-                    "rs_signal": latest["rs_signal"],
-                    "vol20": latest["vol20"],
-                    "rvol": latest["rvol"],
-                    "breakout_50d": latest["breakout_50d"],
-                    "accumulation": latest["accumulation"],
-                    "momentum_score": latest["momentum_score"],
-                    "rsi14": latest["rsi14"],
-                    "volatility": latest["volatility"],
-                    "extra_indicators": latest["extra_indicators"],
-                    "fetched_at": ist_now.strftime("%Y-%m-%d %H:%M:%S IST"),
-                }])
-                inserted += 1
 
-        return {"symbol": clean_sym, "timeframe": timeframe, "rows_updated": inserted}
+            return {"symbol": clean_sym, "timeframe": timeframe, "rows_updated": total_updated}
+        except Exception as exc:
+            finished_at = now_ist().strftime("%Y-%m-%d %H:%M:%S IST")
+            err_msg = str(exc)
+            fno_db.update_log(
+                log_id=log_id, finished_at=finished_at, total_stocks=1,
+                success_count=0, failed_count=1, status="FAILED",
+                message=f"Failed {clean_sym}: {err_msg}",
+                error_details=json.dumps([{"symbol": clean_sym, "error": err_msg}]),
+            )
+            with self._lock:
+                self.progress.update({
+                    "is_running": False,
+                    "processed": 1,
+                    "progress_pct": 0.0,
+                    "current_symbol": None,
+                    "success_count": 0,
+                    "failed_count": 1,
+                    "finished_at": finished_at,
+                    "last_message": f"Failed: {err_msg}",
+                    "errors": [{"symbol": clean_sym, "error": err_msg}],
+                })
+            raise
 
     def _run_custom_all_job(self, timestamps: List[str], timeframe: str) -> None:
         job_id = f"fno_{uuid.uuid4().hex[:8]}"
