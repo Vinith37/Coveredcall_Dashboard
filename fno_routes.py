@@ -168,6 +168,111 @@ def update_fno_schedule(req: FnoScheduleUpdateRequest):
     })
 
 
+class CustomFetchRequest(BaseModel):
+    symbol: str = "ALL"
+    timestamps: List[str] = ["15:00"]
+    timeframe: str = "1M"
+
+
+@router.post("/custom/fetch")
+def custom_fetch(req: CustomFetchRequest):
+    sym = (req.symbol or "ALL").strip().upper().replace(".NS", "")
+    tf = (req.timeframe or "1M").strip().upper()
+    ts_list = [str(t).strip().upper() for t in (req.timestamps or []) if str(t).strip()]
+    if not ts_list:
+        raise HTTPException(status_code=400, detail="Select at least one timestamp.")
+    if tf not in fno_fetcher.TIMEFRAME_DAYS:
+        raise HTTPException(status_code=400, detail=f"Invalid timeframe '{tf}'.")
+
+    if sym != "ALL":
+        try:
+            res = fno_fetcher.fetch_custom_single_stock(sym, ts_list, tf)
+            return JSONResponse(content={
+                "success": True,
+                "instant": True,
+                "message": f"Fetched {res['symbol']} ({tf}, {res['rows_updated']} rows updated).",
+                "result": res,
+            })
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    started, msg = fno_fetcher.trigger_custom_all_job(ts_list, tf)
+    if not started:
+        return JSONResponse(status_code=409, content={"success": False, "message": msg})
+    return JSONResponse(content={"success": True, "instant": False, "message": msg})
+
+
+@router.get("/custom/export")
+def custom_export_csv(
+    symbol: str = "ALL",
+    timestamps: str = "15:00",
+    timeframe: str = "1M",
+    auto_fetch: bool = True,
+):
+    from datetime import timedelta
+
+    sym = (symbol or "ALL").strip().upper().replace(".NS", "")
+    tf = (timeframe or "1M").strip().upper()
+    ts_list = [t.strip().upper() for t in (timestamps or "").split(",") if t.strip()]
+    if not ts_list:
+        raise HTTPException(status_code=400, detail="Select at least one timestamp.")
+
+    days_back = fno_fetcher.TIMEFRAME_DAYS.get(tf, 30)
+    intraday_slots, want_daily, want_live = fno_fetcher.parse_timestamp_selections(ts_list)
+
+    if sym != "ALL" and auto_fetch:
+        try:
+            fno_fetcher.fetch_custom_single_stock(sym, ts_list, tf)
+        except Exception:
+            pass
+
+    cutoff_date = (now_ist() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    allowed_hhmmss = {f"{int(s['hour']):02d}:{int(s['minute']):02d}:00" for s in intraday_slots}
+
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+
+    if intraday_slots or want_live:
+        snap_rows = fno_db.get_symbol_snapshots(sym) if sym != "ALL" else fno_db.get_snapshot_rows(slot="ALL")
+        for r in snap_rows:
+            ts_str = str(r.get("timestamp") or "")
+            date_part = ts_str[:10]
+            time_part = ts_str[11:19]
+            if date_part < cutoff_date:
+                continue
+            is_match = (time_part in allowed_hhmmss) or (want_live and r.get("slot") == "MANUAL")
+            if is_match:
+                key = (r["symbol"], ts_str)
+                if key not in seen:
+                    seen.add(key)
+                    rows.append(r)
+
+    if want_daily:
+        hist_rows = fno_db.get_all_historical_candles(symbol=sym if sym != "ALL" else None)
+        for r in hist_rows:
+            ts_str = str(r.get("timestamp") or "")
+            if ts_str[:10] < cutoff_date:
+                continue
+            key = (r["symbol"], ts_str)
+            if key not in seen:
+                seen.add(key)
+                rows.append(r)
+
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No matching rows for {sym} ({tf}, {', '.join(ts_list)}). Click 'Fetch Data' first.",
+        )
+
+    rows.sort(key=lambda r: str(r["timestamp"]), reverse=True)
+    if sym == "ALL":
+        rows.sort(key=lambda r: str(r["symbol"]))
+
+    tag = "_".join(t.replace(":", "") for t in ts_list[:3])
+    filename = f"{sym}_{tf}_{tag}.csv" if sym != "ALL" else f"FNO_All_Stocks_{tf}_{tag}.csv"
+    return _rows_to_csv_response(rows, filename)
+
+
 @router.get("/stocks")
 def get_fno_stocks(search: str = ""):
     universe = fno_db.get_universe()

@@ -618,105 +618,94 @@
     <!-- TAB 5: DATA FETCHING (NSE F&O KITE CONNECT PIPELINE) -->
     <section class="tab-pane" id="tab-data-fetching">
       <div class="fno-layout">
-        <!-- TOP 3-COLUMN STATUS GRID: A. API Connection, B. Stock Universe, C. Fetching Schedule -->
-        <div class="fno-grid-3">
-          <!-- A. API CONNECTION -->
-          <div class="fno-card">
-            <div class="fno-card-header">
-              <div class="fno-card-title">
-                <span class="fno-section-tag">A</span>
-                <h3>API Connection</h3>
-              </div>
-              <span class="fno-status-pill disconnected" id="fno-api-status-pill">DISCONNECTED</span>
-            </div>
-            <div class="fno-kv-list">
-              <div class="fno-kv-row">
-                <span>Data Source</span>
-                <strong>Zerodha Kite Connect API</strong>
-              </div>
-              <div class="fno-kv-row">
-                <span>Authentication Status</span>
-                <strong id="fno-auth-status">Not Authenticated</strong>
-              </div>
-              <div class="fno-kv-row">
-                <span>Last Successful API Call</span>
-                <strong class="font-mono" id="fno-last-api-conn">—</strong>
-              </div>
-            </div>
-            <div class="fno-card-actions">
-              <button class="btn btn-sm btn-outline" id="btn-fno-open-kite">Configure Kite Session</button>
-              <button class="btn btn-sm btn-outline" id="btn-fno-refresh-status">↻ Refresh Status</button>
-            </div>
+        <!-- COMPACT STATUS BAR -->
+        <div class="fno-lean-statusbar">
+          <div class="fno-lean-status-left">
+            <span class="fno-status-pill disconnected" id="fno-api-status-pill">DISCONNECTED</span>
+            <span class="fno-lean-meta">Kite: <strong id="fno-auth-status">Not Authenticated</strong></span>
+            <span class="fno-lean-meta">Universe: <strong class="font-mono text-cyan" id="fno-total-stocks">0</strong> F&amp;O stocks</span>
+            <span class="fno-lean-meta" id="fno-market-day-badge">Asia/Kolkata</span>
+            <span class="fno-lean-meta">Next Auto: <strong class="font-mono text-cyan" id="fno-next-fetch">—</strong></span>
           </div>
-
-          <!-- B. STOCK UNIVERSE -->
-          <div class="fno-card">
-            <div class="fno-card-header">
-              <div class="fno-card-title">
-                <span class="fno-section-tag">B</span>
-                <h3>NSE F&amp;O Stock Universe</h3>
-              </div>
-              <button class="btn btn-sm btn-outline" id="btn-fno-refresh-universe" title="Dynamically fetch active NFO equity stocks from Kite">
-                ↻ Discover Stocks
-              </button>
-            </div>
-            <div class="fno-metrics-row">
-              <div class="fno-metric-box">
-                <span class="fno-metric-label">Eligible F&amp;O</span>
-                <strong class="fno-metric-val text-cyan font-mono" id="fno-total-stocks">0</strong>
-              </div>
-              <div class="fno-metric-box">
-                <span class="fno-metric-label">Fetched OK</span>
-                <strong class="fno-metric-val text-emerald font-mono" id="fno-fetched-ok">0</strong>
-              </div>
-              <div class="fno-metric-box">
-                <span class="fno-metric-label">Failed</span>
-                <strong class="fno-metric-val text-rose font-mono" id="fno-fetched-fail">0</strong>
-              </div>
-            </div>
-            <div class="fno-kv-row" style="margin-top: 10px;">
-              <span>Universe Last Updated</span>
-              <strong class="font-mono" id="fno-universe-updated">—</strong>
-            </div>
-          </div>
-
-          <!-- C. FETCHING SCHEDULE -->
-          <div class="fno-card">
-            <div class="fno-card-header">
-              <div class="fno-card-title">
-                <span class="fno-section-tag">C</span>
-                <h3>Automated Schedule (IST)</h3>
-              </div>
-              <span class="fno-tz-badge" id="fno-market-day-badge">Asia/Kolkata</span>
-            </div>
-            <div class="fno-schedule-slots" id="fno-schedule-slots">
-              <div class="fno-slot-pill" data-slot="10AM"><span>Morning</span><strong>10:00 AM</strong></div>
-              <div class="fno-slot-pill" data-slot="1PM"><span>Afternoon</span><strong>1:00 PM</strong></div>
-              <div class="fno-slot-pill" data-slot="3PM"><span>Evening</span><strong>3:00 PM</strong></div>
-            </div>
-            <div class="fno-schedule-toolbar">
-              <button class="btn btn-xs btn-ghost" id="btn-fno-add-slot" type="button">+ Add Slot</button>
-              <button class="btn btn-xs btn-cyan" id="btn-fno-save-schedule" type="button">Save Schedule</button>
-            </div>
-            <div class="fno-kv-row" style="margin-top: 10px;">
-              <span>Next Scheduled Fetch</span>
-              <strong class="font-mono text-cyan" id="fno-next-fetch">—</strong>
-            </div>
-            <div class="fno-card-actions">
-              <button class="btn btn-sm btn-emerald" id="btn-fno-manual-fetch" type="button">▶ Manual Fetch Snapshot</button>
-              <button class="btn btn-sm btn-cyan" id="btn-fno-simultaneous-fetch" type="button" title="Simultaneously updates 30M incremental history &amp; captures live snapshot across parallel workers">⚡ Simultaneous (Snapshot + 30M)</button>
-            </div>
+          <div class="fno-lean-status-right">
+            <button class="btn btn-xs btn-outline" id="btn-fno-open-kite" type="button">Kite Session</button>
+            <button class="btn btn-xs btn-outline" id="btn-fno-refresh-universe" type="button">↻ Discover Stocks</button>
           </div>
         </div>
 
-        <!-- MIDDLE 2-COLUMN GRID: D. Fetching Progress & E. Historical Data (30 Months) -->
-        <div class="fno-grid-2">
-          <!-- D. FETCHING PROGRESS -->
+        <!-- LEAN 5-STEP PIPELINE: 1. Stock -> 2. Timestamps -> 3. Time Frame -> 4. Download CSV | 5. Process & Logs -->
+        <div class="fno-lean-grid">
+          <div class="fno-card fno-lean-builder">
+            <!-- 1. SELECT STOCK -->
+            <div class="fno-step-block">
+              <div class="fno-step-title">
+                <span class="fno-section-tag">1</span>
+                <h4>Select Stock</h4>
+              </div>
+              <select id="fno-custom-stock" class="fno-lean-select">
+                <option value="ALL">All Eligible NSE F&amp;O Stocks (Consolidated)</option>
+              </select>
+            </div>
+
+            <!-- 2. SELECT TIMESTAMPS (IST) -->
+            <div class="fno-step-block">
+              <div class="fno-step-title">
+                <span class="fno-section-tag">2</span>
+                <h4>Select Timestamps (IST)</h4>
+                <span class="fno-step-hint">Only selected timestamps are fetched &amp; exported</span>
+              </div>
+              <div class="fno-ts-chips" id="fno-ts-chips">
+                <label class="fno-ts-chip"><input type="checkbox" value="10:00" /> <span>10:00 AM</span></label>
+                <label class="fno-ts-chip"><input type="checkbox" value="13:00" /> <span>1:00 PM</span></label>
+                <label class="fno-ts-chip active"><input type="checkbox" value="15:00" checked /> <span>3:00 PM</span></label>
+                <label class="fno-ts-chip"><input type="checkbox" value="DAILY" /> <span>Daily Close (00:00)</span></label>
+                <label class="fno-ts-chip"><input type="checkbox" value="LIVE" /> <span>Live Now</span></label>
+              </div>
+              <div class="fno-ts-custom-row">
+                <input type="time" id="fno-custom-time-input" class="fno-slot-time" style="width: auto;" value="11:30" />
+                <button class="btn btn-xs btn-outline" id="btn-fno-add-custom-time" type="button">+ Add Time</button>
+                <button class="btn btn-xs btn-ghost" id="btn-fno-save-auto-schedule" type="button" title="Save selected IST times as the daily background auto-schedule">Save as Auto-Schedule</button>
+              </div>
+            </div>
+
+            <!-- 3. TIME FRAME -->
+            <div class="fno-step-block">
+              <div class="fno-step-title">
+                <span class="fno-section-tag">3</span>
+                <h4>Time Frame</h4>
+              </div>
+              <div class="fno-tf-group" id="fno-tf-group">
+                <button type="button" class="fno-tf-btn" data-tf="1D">Today</button>
+                <button type="button" class="fno-tf-btn" data-tf="7D">7 Days</button>
+                <button type="button" class="fno-tf-btn active" data-tf="1M">1 Month</button>
+                <button type="button" class="fno-tf-btn" data-tf="6M">6 Months</button>
+                <button type="button" class="fno-tf-btn" data-tf="1Y">1 Year</button>
+                <button type="button" class="fno-tf-btn" data-tf="30M">30 Months</button>
+              </div>
+            </div>
+
+            <!-- 4. DOWNLOAD CSV -->
+            <div class="fno-step-block">
+              <div class="fno-step-title">
+                <span class="fno-section-tag">4</span>
+                <h4>Fetch &amp; Download CSV</h4>
+              </div>
+              <div class="fno-card-actions">
+                <button class="btn btn-sm btn-primary" id="btn-fno-custom-fetch" type="button">▶ Fetch Data</button>
+                <button class="btn btn-sm btn-emerald" id="btn-fno-custom-download" type="button">⬇ Download CSV</button>
+              </div>
+              <p class="fno-hint-text" style="margin-top: 6px;">
+                Single stock downloads seamlessly on-demand. For <strong>All Stocks</strong>, click <strong>Fetch Data</strong> first (track progress on the right), then <strong>Download CSV</strong>.
+              </p>
+            </div>
+          </div>
+
+          <!-- 5. PROCESS & LOGS -->
           <div class="fno-card">
             <div class="fno-card-header">
               <div class="fno-card-title">
-                <span class="fno-section-tag">D</span>
-                <h3>Fetching Progress &amp; Logs</h3>
+                <span class="fno-section-tag">5</span>
+                <h3>Process &amp; Logs</h3>
               </div>
               <span class="font-mono text-cyan" id="fno-progress-pct-label">0%</span>
             </div>
@@ -727,89 +716,9 @@
               <span>Current Stock: <strong class="font-mono text-white" id="fno-current-stock">Idle</strong></span>
               <span>Success: <strong class="text-emerald font-mono" id="fno-prog-success">0</strong> | Failed: <strong class="text-rose font-mono" id="fno-prog-failed">0</strong></span>
             </div>
-            <div class="fno-status-msg" id="fno-last-message">Ready. Scheduler active in background.</div>
-            <div class="fno-error-log-box" id="fno-error-logs">
-              <div class="fno-log-empty">No errors recorded in current run.</div>
-            </div>
-          </div>
-
-          <!-- E. HISTORICAL DATA (30 MONTHS) -->
-          <div class="fno-card">
-            <div class="fno-card-header">
-              <div class="fno-card-title">
-                <span class="fno-section-tag">E</span>
-                <h3>30-Month Historical Data</h3>
-              </div>
-              <span class="fno-tz-badge">Incremental &amp; Deduplicated</span>
-            </div>
-            <div class="fno-metrics-row">
-              <div class="fno-metric-box">
-                <span class="fno-metric-label">Start Date</span>
-                <strong class="fno-metric-val font-mono" style="font-size: 0.95rem;" id="fno-hist-start">—</strong>
-              </div>
-              <div class="fno-metric-box">
-                <span class="fno-metric-label">End Date</span>
-                <strong class="fno-metric-val font-mono" style="font-size: 0.95rem;" id="fno-hist-end">—</strong>
-              </div>
-              <div class="fno-metric-box">
-                <span class="fno-metric-label">Total Candles</span>
-                <strong class="fno-metric-val text-emerald font-mono" id="fno-hist-records">0</strong>
-              </div>
-            </div>
-            <p class="fno-hint-text">
-              Calculates <strong>20 SMA</strong>, <strong>14-period Wilder RSI</strong>, <strong>RVOL</strong>, and <strong>20D Annualized Volatility</strong> on daily OHLCV candles from Kite Connect.
-            </p>
-            <div class="fno-card-actions">
-              <button class="btn btn-sm btn-primary" id="btn-fno-incremental-hist">↻ Incremental Update</button>
-              <button class="btn btn-sm btn-outline" id="btn-fno-full-hist">⟳ Full 30M Refresh</button>
-              <button class="btn btn-sm btn-cyan" id="btn-fno-intraday-backfill" type="button" title="Backfills 10AM / 1PM / 3PM (and custom slot) timestamps across 30 months using Kite 15-min candles">⏱ Backfill Slot Timestamps (30M)</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- F. CSV DOWNLOADS -->
-        <div class="fno-card">
-          <div class="fno-card-header">
-            <div class="fno-card-title">
-              <span class="fno-section-tag">F</span>
-              <h3>CSV Export &amp; Downloads</h3>
-            </div>
-            <span class="fno-hint-inline">22 CSV Columns: Symbol, Timestamp, OHLCV, SMA 20/50/200, Trend Signal, RS Value/Rating/Signal, Vol 20, RVOL, 50D Breakout, Accumulation, Momentum, RSI 14, Volatility %</span>
-          </div>
-          <div class="fno-downloads-grid">
-            <div class="fno-download-box">
-              <label>1. Consolidated F&amp;O Snapshot</label>
-              <p>Latest snapshot across all eligible NSE F&amp;O stocks.</p>
-              <button class="btn btn-sm btn-emerald" id="btn-fno-dl-all">⬇ Download All Stocks CSV</button>
-            </div>
-
-            <div class="fno-download-box">
-              <label>2. Individual Stock (30M History)</label>
-              <div class="fno-inline-control">
-                <select id="fno-dl-stock-select">
-                  <option value="">Select F&amp;O Stock...</option>
-                </select>
-                <button class="btn btn-sm btn-primary" id="btn-fno-dl-stock">⬇ Stock CSV</button>
-              </div>
-            </div>
-
-            <div class="fno-download-box">
-              <label>3. Full 30-Month Historical Dataset</label>
-              <p>Complete multi-stock 30M OHLCV + technical indicators.</p>
-              <button class="btn btn-sm btn-outline" id="btn-fno-dl-hist-all">⬇ Download 30M History CSV</button>
-            </div>
-
-            <div class="fno-download-box">
-              <label>4. Time-Based Snapshot (10 AM / 1 PM / 3 PM)</label>
-              <div class="fno-inline-control">
-                <select id="fno-dl-snapshot-select">
-                  <option value="">Latest by Slot...</option>
-                  <option value="|10AM">Latest 10:00 AM IST</option>
-                  <option value="|1PM">Latest 1:00 PM IST</option>
-                  <option value="|3PM">Latest 3:00 PM IST</option>
-                </select>
-                <button class="btn btn-sm btn-outline" id="btn-fno-dl-snapshot">⬇ Snapshot CSV</button>
-              </div>
+            <div class="fno-status-msg" id="fno-last-message">Ready.</div>
+            <div class="fno-error-log-box" id="fno-error-logs" style="max-height: 210px;">
+              <div class="fno-log-empty">No logs yet.</div>
             </div>
           </div>
         </div>
@@ -1102,7 +1011,7 @@
   <script src="/static/js/rrg-canvas.js?v=20261113_v22"></script>
   <script src="/static/js/screener.js?v=20261113_v22"></script>
   <script src="/static/js/trade-library.js?v=20261113_v22"></script>
-  <script src="/static/js/data-fetching.js?v=20261113_v25"></script>
+  <script src="/static/js/data-fetching.js?v=20261113_v26"></script>
   <script src="/static/app.js?v=20261113_v22"></script>
 </body>
 </html>

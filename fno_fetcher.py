@@ -827,6 +827,311 @@ class FnoDataFetcher:
                     "errors": (self.progress.get("errors", []) + [{"symbol": "SYSTEM", "error": err_msg}])[-50:],
                 })
 
+    TIMEFRAME_DAYS = {
+        "1D": 2,
+        "7D": 7,
+        "1M": 30,
+        "6M": 180,
+        "1Y": 365,
+        "30M": 900,
+    }
+
+    @staticmethod
+    def parse_timestamp_selections(timestamps: List[str]) -> Tuple[List[Dict[str, Any]], bool, bool]:
+        """Parses ['10:00', '13:00', '15:00', 'DAILY', 'LIVE'] into intraday slot dicts & flags."""
+        intraday_slots: List[Dict[str, Any]] = []
+        want_daily = False
+        want_live = False
+        seen = set()
+        for raw in timestamps or []:
+            val = str(raw).strip().upper()
+            if val == "DAILY":
+                want_daily = True
+                continue
+            if val == "LIVE":
+                want_live = True
+                continue
+            if ":" in val:
+                parts = val.split(":", 1)
+                try:
+                    hh, mm = int(parts[0]), int(parts[1])
+                except ValueError:
+                    continue
+                if not (0 <= hh <= 23 and 0 <= mm <= 59):
+                    continue
+                key = f"{hh:02d}:{mm:02d}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                h12 = hh % 12 or 12
+                ampm = "PM" if hh >= 12 else "AM"
+                code = f"{h12}{ampm}" if mm == 0 else f"{h12}_{mm:02d}{ampm}"
+                intraday_slots.append({
+                    "slot": code,
+                    "label": key,
+                    "hour": hh,
+                    "minute": mm,
+                    "enabled": True,
+                })
+        return intraday_slots, want_daily, want_live
+
+    def fetch_custom_single_stock(self, symbol: str, timestamps: List[str], timeframe: str) -> Dict[str, Any]:
+        """Seamlessly fetches data for a single F&O stock for exact timestamps & timeframe."""
+        clean_sym = symbol.strip().upper().replace(".NS", "")
+        days_back = self.TIMEFRAME_DAYS.get(timeframe.upper(), 30)
+        intraday_slots, want_daily, want_live = self.parse_timestamp_selections(timestamps)
+
+        kite = self._require_kite()
+        universe = self.ensure_universe()
+        stock = next((s for s in universe if s["symbol"] == clean_sym), None)
+        if not stock:
+            raise ValueError(f"Symbol '{clean_sym}' not found in NSE F&O universe.")
+
+        nifty_lookup = self._fetch_nifty_lookup(kite)
+        if want_daily or intraday_slots:
+            self._sync_single_stock_history(kite, stock, full_refresh=False, nifty_lookup=nifty_lookup)
+
+        inserted = 0
+        if intraday_slots:
+            built = self._backfill_stock_intraday_slots(
+                kite, stock, slots=intraday_slots, nifty_lookup=nifty_lookup, days_back=days_back
+            )
+            if built:
+                fno_db.upsert_snapshots(built)
+                inserted += len(built)
+
+        if want_live:
+            quotes = self._fetch_batch_quotes(kite, [stock])
+            q = quotes.get(clean_sym)
+            if q:
+                ist_now = now_ist()
+                snap_date = ist_now.strftime("%Y-%m-%d")
+                snap_ts = ist_now.strftime("%Y-%m-%d %H:%M:%S")
+                ohlc = q.get("ohlc") or {}
+                ltp = float(q.get("last_price") or ohlc.get("close") or 0.0)
+                hist_tail = [r for r in fno_db.get_symbol_candles(clean_sym, limit=250) if r["date"] < snap_date]
+                hist_tail.append({
+                    "timestamp": snap_ts,
+                    "date": snap_date,
+                    "open": float(ohlc.get("open") or ltp),
+                    "high": float(ohlc.get("high") or ltp),
+                    "low": float(ohlc.get("low") or ltp),
+                    "close": ltp,
+                    "volume": int(q.get("volume") or 0),
+                })
+                latest = calculate_indicators_df(hist_tail, nifty_lookup=nifty_lookup)[-1]
+                fno_db.upsert_snapshots([{
+                    "snapshot_date": snap_date,
+                    "slot": "MANUAL",
+                    "symbol": clean_sym,
+                    "timestamp": snap_ts,
+                    "open": latest["open"],
+                    "high": latest["high"],
+                    "low": latest["low"],
+                    "close": latest["close"],
+                    "volume": latest["volume"],
+                    "sma20": latest["sma20"],
+                    "sma50": latest["sma50"],
+                    "sma200": latest["sma200"],
+                    "trend": latest["trend"],
+                    "rs_value": latest["rs_value"],
+                    "rs_rating": latest["rs_rating"],
+                    "rs_signal": latest["rs_signal"],
+                    "vol20": latest["vol20"],
+                    "rvol": latest["rvol"],
+                    "breakout_50d": latest["breakout_50d"],
+                    "accumulation": latest["accumulation"],
+                    "momentum_score": latest["momentum_score"],
+                    "rsi14": latest["rsi14"],
+                    "volatility": latest["volatility"],
+                    "extra_indicators": latest["extra_indicators"],
+                    "fetched_at": ist_now.strftime("%Y-%m-%d %H:%M:%S IST"),
+                }])
+                inserted += 1
+
+        return {"symbol": clean_sym, "timeframe": timeframe, "rows_updated": inserted}
+
+    def _run_custom_all_job(self, timestamps: List[str], timeframe: str) -> None:
+        job_id = f"fno_{uuid.uuid4().hex[:8]}"
+        started_at = now_ist().strftime("%Y-%m-%d %H:%M:%S IST")
+        days_back = self.TIMEFRAME_DAYS.get(timeframe.upper(), 30)
+        intraday_slots, want_daily, want_live = self.parse_timestamp_selections(timestamps)
+        slot_label = ",".join(timestamps) if timestamps else timeframe
+
+        log_id = fno_db.insert_log(
+            job_id=job_id,
+            started_at=started_at,
+            slot=timeframe.upper(),
+            mode="custom",
+            status="RUNNING",
+            message=f"Fetching ALL F&O stocks ({timeframe}, timestamps: {slot_label})...",
+        )
+        with self._lock:
+            self.progress.update({
+                "is_running": True,
+                "job_id": job_id,
+                "mode": "custom",
+                "slot": timeframe.upper(),
+                "total": 0,
+                "processed": 0,
+                "progress_pct": 0.0,
+                "current_symbol": "NIFTY 50 Benchmark...",
+                "success_count": 0,
+                "failed_count": 0,
+                "errors": [],
+                "started_at": started_at,
+                "finished_at": None,
+                "last_message": f"Fetching ALL F&O stocks ({timeframe})...",
+            })
+        try:
+            kite = self._require_kite()
+            universe = self.ensure_universe()
+            total = len(universe)
+            with self._lock:
+                self.progress["total"] = total
+
+            nifty_lookup = self._fetch_nifty_lookup(kite)
+            quotes = self._fetch_batch_quotes(kite, universe) if want_live else {}
+            ist_now = now_ist()
+            snap_date = ist_now.strftime("%Y-%m-%d")
+            snap_ts = ist_now.strftime("%Y-%m-%d %H:%M:%S")
+            fetched_at = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
+
+            grouped_rows: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+            rows_lock = threading.Lock()
+            success_count = 0
+            failed_count = 0
+            errors: List[Dict[str, str]] = []
+
+            def _worker(stock: Dict[str, Any]) -> None:
+                sym = stock["symbol"]
+                if want_daily or intraday_slots:
+                    self._sync_single_stock_history(kite, stock, full_refresh=False, nifty_lookup=nifty_lookup)
+                if intraday_slots:
+                    built = self._backfill_stock_intraday_slots(
+                        kite, stock, slots=intraday_slots, nifty_lookup=nifty_lookup, days_back=days_back
+                    )
+                    if built:
+                        with rows_lock:
+                            for r in built:
+                                grouped_rows.setdefault((r["snapshot_date"], r["slot"]), []).append(r)
+                if want_live and quotes.get(sym):
+                    q = quotes[sym]
+                    ohlc = q.get("ohlc") or {}
+                    ltp = float(q.get("last_price") or ohlc.get("close") or 0.0)
+                    hist_tail = [r for r in fno_db.get_symbol_candles(sym, limit=250) if r["date"] < snap_date]
+                    hist_tail.append({
+                        "timestamp": snap_ts,
+                        "date": snap_date,
+                        "open": float(ohlc.get("open") or ltp),
+                        "high": float(ohlc.get("high") or ltp),
+                        "low": float(ohlc.get("low") or ltp),
+                        "close": ltp,
+                        "volume": int(q.get("volume") or 0),
+                    })
+                    latest = calculate_indicators_df(hist_tail, nifty_lookup=nifty_lookup)[-1]
+                    row = {
+                        "snapshot_date": snap_date,
+                        "slot": "MANUAL",
+                        "symbol": sym,
+                        "timestamp": snap_ts,
+                        "open": latest["open"],
+                        "high": latest["high"],
+                        "low": latest["low"],
+                        "close": latest["close"],
+                        "volume": latest["volume"],
+                        "sma20": latest["sma20"],
+                        "sma50": latest["sma50"],
+                        "sma200": latest["sma200"],
+                        "trend": latest["trend"],
+                        "rs_value": latest["rs_value"],
+                        "rs_rating": latest["rs_rating"],
+                        "rs_signal": latest["rs_signal"],
+                        "vol20": latest["vol20"],
+                        "rvol": latest["rvol"],
+                        "breakout_50d": latest["breakout_50d"],
+                        "accumulation": latest["accumulation"],
+                        "momentum_score": latest["momentum_score"],
+                        "rsi14": latest["rsi14"],
+                        "volatility": latest["volatility"],
+                        "extra_indicators": latest["extra_indicators"],
+                        "fetched_at": fetched_at,
+                    }
+                    with rows_lock:
+                        grouped_rows.setdefault((snap_date, "MANUAL"), []).append(row)
+
+            processed = 0
+            with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as pool:
+                future_map = {pool.submit(_worker, st): st["symbol"] for st in universe}
+                for fut in as_completed(future_map):
+                    sym = future_map[fut]
+                    processed += 1
+                    try:
+                        fut.result()
+                        success_count += 1
+                    except Exception as exc:
+                        failed_count += 1
+                        errors.append({"symbol": sym, "error": str(exc)})
+                    with self._lock:
+                        self.progress["current_symbol"] = sym
+                        self.progress["processed"] = processed
+                        self.progress["progress_pct"] = round((processed / total) * 100.0, 1) if total else 100.0
+                        self.progress["success_count"] = success_count
+                        self.progress["failed_count"] = failed_count
+                        self.progress["errors"] = errors[-50:]
+
+            all_built: List[Dict[str, Any]] = []
+            for batch in grouped_rows.values():
+                assign_rs_ratings(batch)
+                all_built.extend(batch)
+            if all_built:
+                fno_db.upsert_snapshots(all_built)
+
+            if want_daily:
+                fno_db.recompute_historical_rs_ratings()
+
+            finished_at = now_ist().strftime("%Y-%m-%d %H:%M:%S IST")
+            status = "SUCCESS" if failed_count == 0 else ("PARTIAL" if success_count > 0 else "FAILED")
+            msg = f"Completed {timeframe} ({slot_label}): {success_count}/{total} succeeded."
+            fno_db.update_log(
+                log_id=log_id, finished_at=finished_at, total_stocks=total,
+                success_count=success_count, failed_count=failed_count,
+                status=status, message=msg,
+                error_details=json.dumps(errors[:50]) if errors else None,
+            )
+            with self._lock:
+                self.progress.update({
+                    "is_running": False, "current_symbol": None,
+                    "finished_at": finished_at, "last_message": msg,
+                })
+        except Exception as exc:
+            finished_at = now_ist().strftime("%Y-%m-%d %H:%M:%S IST")
+            err_msg = str(exc)
+            fno_db.update_log(
+                log_id=log_id, finished_at=finished_at,
+                total_stocks=self.progress.get("total", 0),
+                success_count=self.progress.get("success_count", 0),
+                failed_count=self.progress.get("failed_count", 0),
+                status="FAILED", message=f"Job failed: {err_msg}",
+                error_details=json.dumps([{"symbol": "SYSTEM", "error": err_msg}]),
+            )
+            with self._lock:
+                self.progress.update({
+                    "is_running": False, "current_symbol": None,
+                    "finished_at": finished_at, "last_message": f"Failed: {err_msg}",
+                })
+
+    def trigger_custom_all_job(self, timestamps: List[str], timeframe: str) -> Tuple[bool, str]:
+        with self._lock:
+            if self.progress["is_running"]:
+                return False, f"A fetch job ({self.progress['mode']}) is already running."
+        t = threading.Thread(
+            target=self._run_custom_all_job, args=(timestamps, timeframe),
+            daemon=True, name=f"fno-custom-{timeframe}",
+        )
+        t.start()
+        return True, f"Started fetching ALL F&O stocks ({timeframe}) in background."
+
     def trigger_async_job(self, mode: str = "snapshot", slot: str = "MANUAL") -> Tuple[bool, str]:
         with self._lock:
             if self.progress["is_running"]:
