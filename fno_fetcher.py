@@ -288,6 +288,156 @@ class FnoDataFetcher:
 
         return all_candles
 
+    def _fetch_kite_15min_candles(
+        self,
+        kite,
+        instrument_token: int,
+        from_dt: datetime,
+        to_dt: datetime,
+    ) -> List[Dict[str, Any]]:
+        """Fetches 15-minute intraday OHLCV candles from Kite Connect in 180-day chunks."""
+        all_candles: List[Dict[str, Any]] = []
+        chunk_start = from_dt
+        max_chunk_days = 180  # Kite allows up to 200 days per 15minute call
+
+        while chunk_start < to_dt:
+            chunk_end = min(chunk_start + timedelta(days=max_chunk_days), to_dt)
+            self._api_limiter.wait()
+            raw = self._call_with_retry(
+                lambda cs=chunk_start, ce=chunk_end: kite.historical_data(
+                    instrument_token=instrument_token,
+                    from_date=cs.strftime("%Y-%m-%d %H:%M:%S"),
+                    to_date=ce.strftime("%Y-%m-%d %H:%M:%S"),
+                    interval="15minute",
+                )
+            )
+            for c in raw or []:
+                ts = c["date"]
+                if isinstance(ts, datetime):
+                    ts_ist = ts.astimezone(IST) if ts.tzinfo else ts.replace(tzinfo=IST)
+                else:
+                    ts_ist = datetime.strptime(str(ts)[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+                all_candles.append({
+                    "dt": ts_ist,
+                    "date": ts_ist.strftime("%Y-%m-%d"),
+                    "hhmm": (ts_ist.hour, ts_ist.minute),
+                    "open": float(c.get("open") or 0.0),
+                    "high": float(c.get("high") or 0.0),
+                    "low": float(c.get("low") or 0.0),
+                    "close": float(c.get("close") or 0.0),
+                    "volume": int(c.get("volume") or 0),
+                })
+            chunk_start = chunk_end + timedelta(seconds=1)
+
+        return all_candles
+
+    def _backfill_stock_intraday_slots(
+        self,
+        kite,
+        stock: Dict[str, Any],
+        slots: List[Dict[str, Any]],
+        nifty_lookup: Dict[str, Dict[str, Any]],
+        days_back: int = HISTORICAL_DAYS,
+    ) -> List[Dict[str, Any]]:
+        """
+        Reconstructs exact cumulative OHLCV + indicators at each configured IST slot
+        (e.g. 10:00 AM, 1:00 PM, 3:00 PM) from Kite 15-minute intraday candles.
+        """
+        from bisect import bisect_left
+
+        symbol = stock["symbol"]
+        token = int(stock["instrument_token"])
+        end_dt = now_ist()
+        from_dt = (end_dt - timedelta(days=days_back)).replace(hour=9, minute=0, second=0, microsecond=0)
+
+        bars_15m = self._fetch_kite_15min_candles(kite, token, from_dt, end_dt)
+        if not bars_15m:
+            return []
+
+        # Group 15-minute bars by trading date
+        by_date: Dict[str, List[Dict[str, Any]]] = {}
+        for b in bars_15m:
+            by_date.setdefault(b["date"], []).append(b)
+
+        daily_hist = fno_db.get_all_historical_candles(symbol=symbol)
+        daily_dates = [r["date"] for r in daily_hist]
+        fetched_at = end_dt.strftime("%Y-%m-%d %H:%M:%S IST")
+        out_rows: List[Dict[str, Any]] = []
+
+        for d_str in sorted(by_date.keys()):
+            day_bars = sorted(by_date[d_str], key=lambda x: x["dt"])
+            pos = bisect_left(daily_dates, d_str)
+            prior_daily = [
+                {
+                    "timestamp": r["timestamp"],
+                    "date": r["date"],
+                    "open": r["open"],
+                    "high": r["high"],
+                    "low": r["low"],
+                    "close": r["close"],
+                    "volume": r["volume"],
+                }
+                for r in daily_hist[max(0, pos - 250):pos]
+            ]
+
+            for s in slots:
+                if not s.get("enabled", True):
+                    continue
+                sh, sm = int(s["hour"]), int(s["minute"])
+                slot_dt = datetime.strptime(d_str, "%Y-%m-%d").replace(hour=sh, minute=sm, second=0, tzinfo=IST)
+                if slot_dt > end_dt:
+                    continue
+
+                # All 15-min bars whose start time is strictly before the slot time
+                # (e.g. 09:15, 09:30, 09:45 represent market action up to 10:00:00)
+                up_to_slot = [b for b in day_bars if b["hhmm"] < (sh, sm)]
+                if not up_to_slot:
+                    continue
+
+                snap_ts = f"{d_str} {sh:02d}:{sm:02d}:00"
+                combined = list(prior_daily)
+                combined.append({
+                    "timestamp": snap_ts,
+                    "date": d_str,
+                    "open": up_to_slot[0]["open"],
+                    "high": max(b["high"] for b in up_to_slot),
+                    "low": min(b["low"] for b in up_to_slot),
+                    "close": up_to_slot[-1]["close"],
+                    "volume": sum(b["volume"] for b in up_to_slot),
+                })
+
+                enriched = calculate_indicators_df(combined, nifty_lookup=nifty_lookup)
+                latest = enriched[-1]
+                out_rows.append({
+                    "snapshot_date": d_str,
+                    "slot": s["slot"],
+                    "symbol": symbol,
+                    "timestamp": snap_ts,
+                    "open": latest["open"],
+                    "high": latest["high"],
+                    "low": latest["low"],
+                    "close": latest["close"],
+                    "volume": latest["volume"],
+                    "sma20": latest["sma20"],
+                    "sma50": latest["sma50"],
+                    "sma200": latest["sma200"],
+                    "trend": latest["trend"],
+                    "rs_value": latest["rs_value"],
+                    "rs_rating": latest["rs_rating"],
+                    "rs_signal": latest["rs_signal"],
+                    "vol20": latest["vol20"],
+                    "rvol": latest["rvol"],
+                    "breakout_50d": latest["breakout_50d"],
+                    "accumulation": latest["accumulation"],
+                    "momentum_score": latest["momentum_score"],
+                    "rsi14": latest["rsi14"],
+                    "volatility": latest["volatility"],
+                    "extra_indicators": latest["extra_indicators"],
+                    "fetched_at": fetched_at,
+                })
+
+        return out_rows
+
     def _fetch_nifty_lookup(self, kite, live_nifty_price: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
         """Fetches Nifty 50 30M daily candles from Kite Connect to compute RS Value & Market Regime."""
         end_dt = now_ist()
@@ -466,6 +616,52 @@ class FnoDataFetcher:
                 cutoff_str = (now_ist() - timedelta(days=HISTORICAL_DAYS)).strftime("%Y-%m-%d")
                 fno_db.prune_older_than(cutoff_str)
                 fno_db.recompute_historical_rs_ratings()
+
+            elif mode == "intraday_backfill":
+                # Backfill all enabled schedule slots (e.g. 10AM, 1PM, 3PM) across 30M using 15-min candles
+                with self._lock:
+                    self.progress["current_symbol"] = "NIFTY 50 Benchmark..."
+                nifty_lookup = self._fetch_nifty_lookup(kite)
+                active_slots = [s for s in get_active_schedule_slots() if s.get("enabled", True)]
+                grouped_rows: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+                rows_lock = threading.Lock()
+
+                def _intraday_worker(stock: Dict[str, Any]) -> int:
+                    built = self._backfill_stock_intraday_slots(
+                        kite, stock, slots=active_slots, nifty_lookup=nifty_lookup, days_back=HISTORICAL_DAYS
+                    )
+                    if built:
+                        with rows_lock:
+                            for r in built:
+                                grouped_rows.setdefault((r["snapshot_date"], r["slot"]), []).append(r)
+                    return len(built)
+
+                processed = 0
+                with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as pool:
+                    future_map = {pool.submit(_intraday_worker, st): st["symbol"] for st in universe}
+                    for fut in as_completed(future_map):
+                        sym = future_map[fut]
+                        processed += 1
+                        try:
+                            fut.result()
+                            success_count += 1
+                        except Exception as exc:
+                            failed_count += 1
+                            errors.append({"symbol": sym, "error": str(exc)})
+                        with self._lock:
+                            self.progress["current_symbol"] = sym
+                            self.progress["processed"] = processed
+                            self.progress["progress_pct"] = round((processed / total) * 100.0, 1) if total else 100.0
+                            self.progress["success_count"] = success_count
+                            self.progress["failed_count"] = failed_count
+                            self.progress["errors"] = errors[-50:]
+
+                all_built: List[Dict[str, Any]] = []
+                for batch in grouped_rows.values():
+                    assign_rs_ratings(batch)
+                    all_built.extend(batch)
+                if all_built:
+                    fno_db.upsert_snapshots(all_built)
 
             else:
                 # Snapshot mode (10AM, 1PM, 3PM, MANUAL) or Simultaneous mode (Snapshot + Incremental 30M)

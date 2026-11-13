@@ -32,6 +32,11 @@ function bindFnoListeners() {
   document.getElementById('btn-fno-manual-fetch')?.addEventListener('click', () => triggerFnoFetch('snapshot', 'MANUAL'));
   document.getElementById('btn-fno-simultaneous-fetch')?.addEventListener('click', () => triggerFnoFetch('simultaneous', 'MANUAL'));
   document.getElementById('btn-fno-incremental-hist')?.addEventListener('click', () => triggerFnoFetch('incremental', 'MANUAL'));
+  document.getElementById('btn-fno-intraday-backfill')?.addEventListener('click', () => {
+    if (confirm('Backfill all configured IST slot timestamps (e.g. 10AM, 1PM, 3PM) across 30 months using Kite 15-minute candles?')) {
+      triggerFnoFetch('intraday_backfill', 'MANUAL');
+    }
+  });
   document.getElementById('btn-fno-add-slot')?.addEventListener('click', addFnoScheduleSlot);
   document.getElementById('btn-fno-save-schedule')?.addEventListener('click', saveFnoSchedule);
 

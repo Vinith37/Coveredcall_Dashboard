@@ -121,10 +121,10 @@ def refresh_fno_universe():
 def trigger_fno_fetch(req: FnoFetchRequest):
     mode = req.mode.lower().strip()
     slot = req.slot.upper().strip()
-    if mode not in ("snapshot", "incremental", "historical", "simultaneous"):
+    if mode not in ("snapshot", "incremental", "historical", "simultaneous", "intraday_backfill"):
         raise HTTPException(
             status_code=400,
-            detail="Invalid mode. Must be 'snapshot', 'incremental', 'historical', or 'simultaneous'.",
+            detail="Invalid mode. Must be 'snapshot', 'incremental', 'historical', 'simultaneous', or 'intraday_backfill'.",
         )
     valid_slots = {"MANUAL", "10AM", "1PM", "3PM"} | {s["slot"].upper() for s in fno_db.get_schedule_slots()}
     if slot not in valid_slots:
