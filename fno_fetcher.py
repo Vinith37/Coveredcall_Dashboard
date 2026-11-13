@@ -281,12 +281,16 @@ class FnoDataFetcher:
         last_date = None if full_refresh else fno_db.get_last_candle_date(symbol)
         existing_tail: List[Dict[str, Any]] = []
 
+        needs_recompute = False
         if last_date and not full_refresh:
             last_dt = datetime.strptime(last_date, "%Y-%m-%d").replace(tzinfo=IST)
             # Fetch a 7-day overlap so updated/incomplete candles are cleanly refreshed
             from_dt = max(cutoff_dt, last_dt - timedelta(days=7))
             # Load trailing 250 bars from DB so SMA 200 / 50D Breakout / 12M RS have full lookback
             existing_tail = fno_db.get_symbol_candles(symbol, limit=250)
+            if any(r.get("sma50") is None or r.get("trend") is None for r in existing_tail):
+                needs_recompute = True
+                existing_tail = fno_db.get_symbol_candles(symbol)
         else:
             from_dt = cutoff_dt
 
@@ -310,9 +314,9 @@ class FnoDataFetcher:
             merged_map[row["timestamp"]] = row
 
         enriched = calculate_indicators_df(list(merged_map.values()), nifty_lookup=nifty_lookup)
-        # Only upsert rows from `from_dt` onwards when incremental (or all when full)
+        # Only upsert rows from `from_dt` onwards when incremental (unless backfilling missing columns)
         min_upsert_date = from_dt.strftime("%Y-%m-%d")
-        to_save = [r for r in enriched if r["date"] >= min_upsert_date] if existing_tail else enriched
+        to_save = [r for r in enriched if r["date"] >= min_upsert_date] if (existing_tail and not needs_recompute) else enriched
 
         now_str = now_ist().strftime("%Y-%m-%d %H:%M:%S IST")
         return fno_db.upsert_historical_candles(symbol, to_save, now_str)
