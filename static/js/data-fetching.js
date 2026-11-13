@@ -303,14 +303,22 @@ function renderFnoStatus(data) {
     const cur = snapSel.value;
     const baseOpts = [
       '<option value="">Select Snapshot...</option>',
+      '<option value="|ALL">All Recorded Timestamps (All Slots)</option>',
       '<option value="|10AM">Latest 10:00 AM IST</option>',
       '<option value="|1PM">Latest 1:00 PM IST</option>',
       '<option value="|3PM">Latest 3:00 PM IST</option>',
     ];
+    const datesCount = {};
+    data.available_snapshots.forEach(s => {
+      datesCount[s.snapshot_date] = (datesCount[s.snapshot_date] || 0) + 1;
+    });
+    const allByDateOpts = Object.entries(datesCount).map(([d, cnt]) =>
+      `<option value="${d}|ALL">${d} — All Timestamps (${cnt} slots)</option>`
+    );
     const datedOpts = data.available_snapshots.map(s =>
       `<option value="${s.snapshot_date}|${s.slot}">${s.snapshot_date} — ${s.slot} (${s.stock_count} stocks)</option>`
     );
-    snapSel.innerHTML = baseOpts.concat(datedOpts).join('');
+    snapSel.innerHTML = baseOpts.concat(allByDateOpts, datedOpts).join('');
     if (cur) snapSel.value = cur;
   }
 }

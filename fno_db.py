@@ -483,10 +483,43 @@ class FnoDatabase:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_symbol_snapshots(self, symbol: str) -> List[Dict[str, Any]]:
+        snap_select = f"snapshot_date, slot, symbol, timestamp, open, high, low, close, volume, {self._METRIC_COLS}, fetched_at"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT {snap_select}
+                FROM scheduled_snapshots
+                WHERE symbol = ?
+                ORDER BY timestamp DESC
+                """,
+                (symbol.upper(),),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_snapshot_rows(self, snapshot_date: Optional[str] = None, slot: Optional[str] = None) -> List[Dict[str, Any]]:
         snap_select = f"snapshot_date, slot, symbol, timestamp, open, high, low, close, volume, {self._METRIC_COLS}, fetched_at"
         with self._connect() as conn:
-            if snapshot_date and slot:
+            if slot == "ALL":
+                if snapshot_date:
+                    rows = conn.execute(
+                        f"""
+                        SELECT {snap_select}
+                        FROM scheduled_snapshots
+                        WHERE snapshot_date = ?
+                        ORDER BY symbol ASC, timestamp DESC
+                        """,
+                        (snapshot_date,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"""
+                        SELECT {snap_select}
+                        FROM scheduled_snapshots
+                        ORDER BY symbol ASC, timestamp DESC
+                        """
+                    ).fetchall()
+            elif snapshot_date and slot:
                 rows = conn.execute(
                     f"""
                     SELECT {snap_select}

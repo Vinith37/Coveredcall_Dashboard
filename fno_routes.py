@@ -234,16 +234,21 @@ def export_all_stocks_csv(date: Optional[str] = None, slot: Optional[str] = None
 @router.get("/export/stock/{symbol}")
 def export_single_stock_historical_csv(symbol: str):
     clean_sym = symbol.strip().upper().replace(".NS", "")
-    rows = fno_db.get_all_historical_candles(symbol=clean_sym)
+    hist_rows = fno_db.get_all_historical_candles(symbol=clean_sym)
+    snap_rows = fno_db.get_symbol_snapshots(symbol=clean_sym)
+
+    merged_by_ts: Dict[str, Dict[str, Any]] = {}
+    for r in hist_rows:
+        merged_by_ts[str(r["timestamp"])] = r
+    for r in snap_rows:
+        merged_by_ts[str(r["timestamp"])] = r
+
+    rows = sorted(merged_by_ts.values(), key=lambda r: str(r["timestamp"]), reverse=True)
     if not rows:
-        # Fallback to snapshot if 30M historical hasn't been pulled yet
-        snaps = [r for r in fno_db.get_snapshot_rows() if r["symbol"] == clean_sym]
-        if not snaps:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No historical or snapshot data stored for {clean_sym}. Run Historical Refresh or Fetch first.",
-            )
-        rows = snaps
+        raise HTTPException(
+            status_code=404,
+            detail=f"No historical or snapshot data stored for {clean_sym}. Run Historical Refresh or Fetch first.",
+        )
 
     filename = f"{clean_sym}_Historical_30M.csv"
     return _rows_to_csv_response(rows, filename)
@@ -251,7 +256,23 @@ def export_single_stock_historical_csv(symbol: str):
 
 @router.get("/export/historical-all")
 def export_all_historical_csv():
-    rows = fno_db.get_all_historical_candles()
+    hist_rows = fno_db.get_all_historical_candles()
+    snap_rows = fno_db.get_snapshot_rows(slot="ALL")
+
+    merged: Dict[tuple, Dict[str, Any]] = {}
+    for r in hist_rows:
+        merged[(r["symbol"], str(r["timestamp"]))] = r
+    for r in snap_rows:
+        merged[(r["symbol"], str(r["timestamp"]))] = r
+
+    rows = sorted(
+        merged.values(),
+        key=lambda r: (str(r["symbol"]), str(r["timestamp"])),
+    )
+    # Sort each symbol's timestamps newest-first while keeping symbols A-Z
+    rows.sort(key=lambda r: str(r["timestamp"]), reverse=True)
+    rows.sort(key=lambda r: str(r["symbol"]))
+
     if not rows:
         raise HTTPException(
             status_code=404,
