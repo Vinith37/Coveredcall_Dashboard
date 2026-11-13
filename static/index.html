@@ -694,12 +694,17 @@
               <div class="fno-slot-pill" data-slot="1PM"><span>Afternoon</span><strong>1:00 PM</strong></div>
               <div class="fno-slot-pill" data-slot="3PM"><span>Evening</span><strong>3:00 PM</strong></div>
             </div>
+            <div class="fno-schedule-toolbar">
+              <button class="btn btn-xs btn-ghost" id="btn-fno-add-slot" type="button">+ Add Slot</button>
+              <button class="btn btn-xs btn-cyan" id="btn-fno-save-schedule" type="button">Save Schedule</button>
+            </div>
             <div class="fno-kv-row" style="margin-top: 10px;">
               <span>Next Scheduled Fetch</span>
               <strong class="font-mono text-cyan" id="fno-next-fetch">—</strong>
             </div>
             <div class="fno-card-actions">
-              <button class="btn btn-sm btn-emerald" id="btn-fno-manual-fetch">▶ Manual Fetch Snapshot</button>
+              <button class="btn btn-sm btn-emerald" id="btn-fno-manual-fetch" type="button">▶ Manual Fetch Snapshot</button>
+              <button class="btn btn-sm btn-cyan" id="btn-fno-simultaneous-fetch" type="button" title="Simultaneously updates 30M incremental history &amp; captures live snapshot across parallel workers">⚡ Simultaneous (Snapshot + 30M)</button>
             </div>
           </div>
         </div>
@@ -1096,7 +1101,7 @@
   <script src="/static/js/rrg-canvas.js?v=20261113_v22"></script>
   <script src="/static/js/screener.js?v=20261113_v22"></script>
   <script src="/static/js/trade-library.js?v=20261113_v22"></script>
-  <script src="/static/js/data-fetching.js?v=20261113_v22"></script>
+  <script src="/static/js/data-fetching.js?v=20261113_v23"></script>
   <script src="/static/app.js?v=20261113_v22"></script>
 </body>
 </html>

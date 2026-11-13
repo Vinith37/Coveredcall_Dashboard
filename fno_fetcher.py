@@ -13,6 +13,7 @@ import json
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -74,31 +75,75 @@ def is_nse_trading_day(d: date) -> bool:
     return True
 
 
+def get_active_schedule_slots() -> List[Dict[str, Any]]:
+    """Loads persisted schedule slots from SQLite (all slots)."""
+    slots = fno_db.get_schedule_slots()
+    if slots:
+        return slots
+    return [
+        {"slot": code, "label": label, "hour": h, "minute": m, "enabled": True}
+        for code, h, m, label in SCHEDULE_SLOTS
+    ]
+
+
 def get_next_scheduled_run(ref_dt: Optional[datetime] = None) -> Dict[str, Any]:
-    """Computes the next upcoming scheduled fetch in Asia/Kolkata timezone."""
+    """Computes the next upcoming enabled scheduled fetch in Asia/Kolkata timezone."""
     dt = ref_dt or now_ist()
+    slots = [s for s in get_active_schedule_slots() if s.get("enabled", True)]
+    if not slots:
+        return {
+            "slot": "DISABLED",
+            "label": "All schedule slots disabled",
+            "scheduled_at": "Paused",
+            "seconds_remaining": 0,
+        }
     for day_offset in range(0, 14):
         candidate_date = (dt + timedelta(days=day_offset)).date()
         if not is_nse_trading_day(candidate_date):
             continue
-        for slot_code, hour, minute, label in SCHEDULE_SLOTS:
+        for s in sorted(slots, key=lambda x: (x["hour"], x["minute"])):
             slot_dt = datetime(
                 candidate_date.year, candidate_date.month, candidate_date.day,
-                hour, minute, 0, tzinfo=IST
+                int(s["hour"]), int(s["minute"]), 0, tzinfo=IST
             )
             if slot_dt > dt:
                 return {
-                    "slot": slot_code,
-                    "label": label,
+                    "slot": s["slot"],
+                    "label": s["label"],
                     "scheduled_at": slot_dt.strftime("%Y-%m-%d %H:%M:%S IST"),
                     "seconds_remaining": int((slot_dt - dt).total_seconds()),
                 }
-    return {"slot": "10AM", "label": "Morning (10:00 AM IST)", "scheduled_at": None, "seconds_remaining": None}
+    return {"slot": slots[0]["slot"], "label": slots[0]["label"], "scheduled_at": None, "seconds_remaining": None}
+
+
+class RateLimiter:
+    """Thread-safe minimum-interval rate limiter for Kite historical API calls."""
+
+    def __init__(self, min_interval: float = 0.35):
+        self.min_interval = min_interval
+        self._lock = threading.Lock()
+        self._next_allowed = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            if now < self._next_allowed:
+                sleep_for = self._next_allowed - now
+                self._next_allowed += self.min_interval
+            else:
+                sleep_for = 0.0
+                self._next_allowed = now + self.min_interval
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+
+
+MAX_CONCURRENT_WORKERS = 6
 
 
 class FnoDataFetcher:
     def __init__(self):
         self._lock = threading.Lock()
+        self._api_limiter = RateLimiter(HIST_RATE_LIMIT_DELAY)
         self._scheduler_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
@@ -212,7 +257,7 @@ class FnoDataFetcher:
 
         while chunk_start < to_dt:
             chunk_end = min(chunk_start + timedelta(days=max_chunk_days), to_dt)
-            time.sleep(HIST_RATE_LIMIT_DELAY)
+            self._api_limiter.wait()
             raw = self._call_with_retry(
                 lambda cs=chunk_start, ce=chunk_end: kite.historical_data(
                     instrument_token=instrument_token,
@@ -392,22 +437,30 @@ class FnoDataFetcher:
                 with self._lock:
                     self.progress["current_symbol"] = "NIFTY 50 Benchmark..."
                 nifty_lookup = self._fetch_nifty_lookup(kite)
-                for idx, stock in enumerate(universe, start=1):
-                    sym = stock["symbol"]
-                    with self._lock:
-                        self.progress["current_symbol"] = sym
-                    try:
-                        self._sync_single_stock_history(kite, stock, full_refresh=full_refresh, nifty_lookup=nifty_lookup)
-                        success_count += 1
-                    except Exception as exc:
-                        failed_count += 1
-                        errors.append({"symbol": sym, "error": str(exc)})
-                    with self._lock:
-                        self.progress["processed"] = idx
-                        self.progress["progress_pct"] = round((idx / total) * 100.0, 1) if total else 100.0
-                        self.progress["success_count"] = success_count
-                        self.progress["failed_count"] = failed_count
-                        self.progress["errors"] = errors[-50:]
+
+                def _hist_worker(stock: Dict[str, Any]) -> str:
+                    self._sync_single_stock_history(kite, stock, full_refresh=full_refresh, nifty_lookup=nifty_lookup)
+                    return stock["symbol"]
+
+                processed = 0
+                with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as pool:
+                    future_map = {pool.submit(_hist_worker, st): st["symbol"] for st in universe}
+                    for fut in as_completed(future_map):
+                        sym = future_map[fut]
+                        processed += 1
+                        try:
+                            fut.result()
+                            success_count += 1
+                        except Exception as exc:
+                            failed_count += 1
+                            errors.append({"symbol": sym, "error": str(exc)})
+                        with self._lock:
+                            self.progress["current_symbol"] = sym
+                            self.progress["processed"] = processed
+                            self.progress["progress_pct"] = round((processed / total) * 100.0, 1) if total else 100.0
+                            self.progress["success_count"] = success_count
+                            self.progress["failed_count"] = failed_count
+                            self.progress["errors"] = errors[-50:]
 
                 # Keep database strictly within 30 months & compute cross-sectional RS Ratings
                 cutoff_str = (now_ist() - timedelta(days=HISTORICAL_DAYS)).strftime("%Y-%m-%d")
@@ -415,7 +468,8 @@ class FnoDataFetcher:
                 fno_db.recompute_historical_rs_ratings()
 
             else:
-                # Snapshot mode (10AM, 1PM, 3PM, MANUAL)
+                # Snapshot mode (10AM, 1PM, 3PM, MANUAL) or Simultaneous mode (Snapshot + Incremental 30M)
+                is_simultaneous = mode == "simultaneous"
                 with self._lock:
                     self.progress["current_symbol"] = "Fetching batch live quotes & Nifty benchmark..."
                 quotes = self._fetch_batch_quotes(kite, universe)
@@ -429,92 +483,104 @@ class FnoDataFetcher:
                 fetched_at = ist_now.strftime("%Y-%m-%d %H:%M:%S IST")
                 snapshot_rows: List[Dict[str, Any]] = []
 
-                for idx, stock in enumerate(universe, start=1):
+                def _snap_worker(stock: Dict[str, Any]) -> Dict[str, Any]:
                     sym = stock["symbol"]
-                    with self._lock:
-                        self.progress["current_symbol"] = sym
-                    try:
-                        q = quotes.get(sym)
-                        if not q:
-                            raise RuntimeError("No quote returned by Kite API")
+                    q = quotes.get(sym)
+                    if not q:
+                        raise RuntimeError("No quote returned by Kite API")
 
-                        ohlc = q.get("ohlc") or {}
-                        ltp = float(q.get("last_price") or ohlc.get("close") or 0.0)
-                        vol = int(q.get("volume") or 0)
-                        open_p = float(ohlc.get("open") or ltp)
-                        high_p = float(ohlc.get("high") or ltp)
-                        low_p = float(ohlc.get("low") or ltp)
+                    ohlc = q.get("ohlc") or {}
+                    ltp = float(q.get("last_price") or ohlc.get("close") or 0.0)
+                    vol = int(q.get("volume") or 0)
+                    open_p = float(ohlc.get("open") or ltp)
+                    high_p = float(ohlc.get("high") or ltp)
+                    low_p = float(ohlc.get("low") or ltp)
 
-                        # Check trailing historical bars (250 bars needed for SMA 200 & 12M RS)
+                    # In simultaneous mode, always sync incremental 30M history alongside snapshot
+                    hist_tail = fno_db.get_symbol_candles(sym, limit=250)
+                    if is_simultaneous or len(hist_tail) < 200:
+                        self._sync_single_stock_history(kite, stock, full_refresh=False, nifty_lookup=nifty_lookup)
                         hist_tail = fno_db.get_symbol_candles(sym, limit=250)
-                        if len(hist_tail) < 200:
-                            self._sync_single_stock_history(kite, stock, full_refresh=False, nifty_lookup=nifty_lookup)
-                            hist_tail = fno_db.get_symbol_candles(sym, limit=250)
 
-                        # Combine trailing historical bars (prior to today) + current live intraday bar
-                        combined = [
-                            {
-                                "timestamp": r["timestamp"],
-                                "date": r["date"],
-                                "open": r["open"],
-                                "high": r["high"],
-                                "low": r["low"],
-                                "close": r["close"],
-                                "volume": r["volume"],
-                            }
-                            for r in hist_tail
-                            if r["date"] < snap_date
-                        ]
-                        combined.append({
-                            "timestamp": snap_ts,
-                            "date": snap_date,
-                            "open": open_p,
-                            "high": high_p,
-                            "low": low_p,
-                            "close": ltp,
-                            "volume": vol,
-                        })
+                    # Combine trailing historical bars (prior to today) + current live intraday bar
+                    combined = [
+                        {
+                            "timestamp": r["timestamp"],
+                            "date": r["date"],
+                            "open": r["open"],
+                            "high": r["high"],
+                            "low": r["low"],
+                            "close": r["close"],
+                            "volume": r["volume"],
+                        }
+                        for r in hist_tail
+                        if r["date"] < snap_date
+                    ]
+                    combined.append({
+                        "timestamp": snap_ts,
+                        "date": snap_date,
+                        "open": open_p,
+                        "high": high_p,
+                        "low": low_p,
+                        "close": ltp,
+                        "volume": vol,
+                    })
 
-                        enriched = calculate_indicators_df(combined, nifty_lookup=nifty_lookup)
-                        latest = enriched[-1]
-                        snapshot_rows.append({
-                            "snapshot_date": snap_date,
-                            "slot": slot,
-                            "symbol": sym,
-                            "timestamp": snap_ts,
-                            "open": latest["open"],
-                            "high": latest["high"],
-                            "low": latest["low"],
-                            "close": latest["close"],
-                            "volume": latest["volume"],
-                            "sma20": latest["sma20"],
-                            "sma50": latest["sma50"],
-                            "sma200": latest["sma200"],
-                            "trend": latest["trend"],
-                            "rs_value": latest["rs_value"],
-                            "rs_rating": latest["rs_rating"],
-                            "rs_signal": latest["rs_signal"],
-                            "vol20": latest["vol20"],
-                            "rvol": latest["rvol"],
-                            "breakout_50d": latest["breakout_50d"],
-                            "accumulation": latest["accumulation"],
-                            "momentum_score": latest["momentum_score"],
-                            "rsi14": latest["rsi14"],
-                            "volatility": latest["volatility"],
-                            "extra_indicators": latest["extra_indicators"],
-                            "fetched_at": fetched_at,
-                        })
-                        success_count += 1
-                    except Exception as exc:
-                        failed_count += 1
-                        errors.append({"symbol": sym, "error": str(exc)})
+                    enriched = calculate_indicators_df(combined, nifty_lookup=nifty_lookup)
+                    latest = enriched[-1]
+                    return {
+                        "snapshot_date": snap_date,
+                        "slot": slot,
+                        "symbol": sym,
+                        "timestamp": snap_ts,
+                        "open": latest["open"],
+                        "high": latest["high"],
+                        "low": latest["low"],
+                        "close": latest["close"],
+                        "volume": latest["volume"],
+                        "sma20": latest["sma20"],
+                        "sma50": latest["sma50"],
+                        "sma200": latest["sma200"],
+                        "trend": latest["trend"],
+                        "rs_value": latest["rs_value"],
+                        "rs_rating": latest["rs_rating"],
+                        "rs_signal": latest["rs_signal"],
+                        "vol20": latest["vol20"],
+                        "rvol": latest["rvol"],
+                        "breakout_50d": latest["breakout_50d"],
+                        "accumulation": latest["accumulation"],
+                        "momentum_score": latest["momentum_score"],
+                        "rsi14": latest["rsi14"],
+                        "volatility": latest["volatility"],
+                        "extra_indicators": latest["extra_indicators"],
+                        "fetched_at": fetched_at,
+                    }
 
-                    with self._lock:
-                        self.progress["processed"] = idx
-                        self.progress["progress_pct"] = round((idx / total) * 100.0, 1) if total else 100.0
-                        self.progress["success_count"] = success_count
-                        self.progress["failed_count"] = failed_count
-                        self.progress["errors"] = errors[-50:]
+                processed = 0
+                with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_WORKERS) as pool:
+                    future_map = {pool.submit(_snap_worker, st): st["symbol"] for st in universe}
+                    for fut in as_completed(future_map):
+                        sym = future_map[fut]
+                        processed += 1
+                        try:
+                            row = fut.result()
+                            snapshot_rows.append(row)
+                            success_count += 1
+                        except Exception as exc:
+                            failed_count += 1
+                            errors.append({"symbol": sym, "error": str(exc)})
+                        with self._lock:
+                            self.progress["current_symbol"] = sym
+                            self.progress["processed"] = processed
+                            self.progress["progress_pct"] = round((processed / total) * 100.0, 1) if total else 100.0
+                            self.progress["success_count"] = success_count
+                            self.progress["failed_count"] = failed_count
+                            self.progress["errors"] = errors[-50:]
+
+                if is_simultaneous:
+                    cutoff_str = (now_ist() - timedelta(days=HISTORICAL_DAYS)).strftime("%Y-%m-%d")
+                    fno_db.prune_older_than(cutoff_str)
+                    fno_db.recompute_historical_rs_ratings()
 
                 if snapshot_rows:
                     assign_rs_ratings(snapshot_rows)
@@ -581,7 +647,12 @@ class FnoDataFetcher:
                 dt = now_ist()
                 today_str = dt.strftime("%Y-%m-%d")
                 if is_nse_trading_day(dt.date()):
-                    for slot_code, hour, minute, _ in SCHEDULE_SLOTS:
+                    for s in get_active_schedule_slots():
+                        if not s.get("enabled", True):
+                            continue
+                        slot_code = s["slot"]
+                        hour = int(s["hour"])
+                        minute = int(s["minute"])
                         # Trigger within [HH:MM:00, HH:MM:59] + 1 min grace window if not yet run today
                         slot_start = dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
                         delta_sec = (dt - slot_start).total_seconds()
@@ -632,13 +703,14 @@ class FnoDataFetcher:
         today_str = dt.strftime("%Y-%m-%d")
         schedule_slots_status = [
             {
-                "slot": code,
-                "label": label,
-                "hour": h,
-                "minute": m,
-                "completed_today": fno_db.has_snapshot_for_slot(today_str, code),
+                "slot": s["slot"],
+                "label": s["label"],
+                "hour": int(s["hour"]),
+                "minute": int(s["minute"]),
+                "enabled": bool(s.get("enabled", True)),
+                "completed_today": fno_db.has_snapshot_for_slot(today_str, s["slot"]),
             }
-            for code, h, m, label in SCHEDULE_SLOTS
+            for s in get_active_schedule_slots()
         ]
 
         with self._lock:

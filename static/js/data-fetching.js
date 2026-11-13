@@ -8,6 +8,8 @@ let fnoStatusData = null;
 let fnoStocksRows = [];
 let fnoPollTimer = null;
 let fnoPreviewSearch = '';
+let fnoScheduleDraft = [];
+let fnoScheduleDirty = false;
 
 function initDataFetching() {
   bindFnoListeners();
@@ -28,7 +30,27 @@ function bindFnoListeners() {
 
   document.getElementById('btn-fno-refresh-universe')?.addEventListener('click', refreshFnoUniverse);
   document.getElementById('btn-fno-manual-fetch')?.addEventListener('click', () => triggerFnoFetch('snapshot', 'MANUAL'));
+  document.getElementById('btn-fno-simultaneous-fetch')?.addEventListener('click', () => triggerFnoFetch('simultaneous', 'MANUAL'));
   document.getElementById('btn-fno-incremental-hist')?.addEventListener('click', () => triggerFnoFetch('incremental', 'MANUAL'));
+  document.getElementById('btn-fno-add-slot')?.addEventListener('click', addFnoScheduleSlot);
+  document.getElementById('btn-fno-save-schedule')?.addEventListener('click', saveFnoSchedule);
+
+  const slotsWrap = document.getElementById('fno-schedule-slots');
+  if (slotsWrap) {
+    slotsWrap.addEventListener('change', handleFnoSlotInput);
+    slotsWrap.addEventListener('click', (e) => {
+      const delBtn = e.target.closest('.fno-slot-remove');
+      if (!delBtn) return;
+      const idx = Number(delBtn.dataset.idx);
+      if (fnoScheduleDraft.length <= 1) {
+        showToast('At least one schedule slot must remain.');
+        return;
+      }
+      fnoScheduleDraft.splice(idx, 1);
+      fnoScheduleDirty = true;
+      renderFnoScheduleEditor();
+    });
+  }
   document.getElementById('btn-fno-full-hist')?.addEventListener('click', () => {
     if (confirm('Run full 30-month historical refresh for all 200+ NSE F&O stocks? This respects Kite rate limits and runs in the background.')) {
       triggerFnoFetch('historical', 'MANUAL');
@@ -221,14 +243,16 @@ function renderFnoStatus(data) {
   if (dayBadge) {
     dayBadge.textContent = sched.is_trading_day ? 'Trading Day (IST)' : 'Market Holiday / Weekend';
   }
-  const slotsWrap = document.getElementById('fno-schedule-slots');
-  if (slotsWrap && Array.isArray(sched.slots)) {
-    slotsWrap.innerHTML = sched.slots.map(s => `
-      <div class="fno-slot-pill ${s.completed_today ? 'completed' : ''}" title="${s.completed_today ? 'Completed today' : 'Scheduled'}">
-        <span>${s.slot}</span>
-        <strong>${s.hour > 12 ? s.hour - 12 : s.hour}:00 ${s.hour >= 12 ? 'PM' : 'AM'} ${s.completed_today ? '✓' : ''}</strong>
-      </div>
-    `).join('');
+  if (!fnoScheduleDirty && Array.isArray(sched.slots)) {
+    fnoScheduleDraft = sched.slots.map(s => ({
+      slot: s.slot,
+      label: s.label || s.slot,
+      hour: Number(s.hour),
+      minute: Number(s.minute),
+      enabled: s.enabled !== false,
+      completed_today: Boolean(s.completed_today),
+    }));
+    renderFnoScheduleEditor();
   }
   const nf = sched.next_fetch || {};
   setText('fno-next-fetch', nf.scheduled_at ? `${nf.slot} — ${nf.scheduled_at}` : '—');
@@ -364,4 +388,122 @@ function renderFnoPreviewTable() {
     `;
   }).join('');
 }
+
+function pad2(n) {
+  return String(Math.max(0, Number(n) || 0)).padStart(2, '0');
+}
+
+function formatSlotCodeFromTime(hour, minute) {
+  const h = Number(hour);
+  const m = Number(minute);
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  return m === 0 ? `${h12}${ampm}` : `${h12}_${pad2(m)}${ampm}`;
+}
+
+function renderFnoScheduleEditor() {
+  const slotsWrap = document.getElementById('fno-schedule-slots');
+  if (!slotsWrap) return;
+
+  slotsWrap.innerHTML = fnoScheduleDraft.map((s, idx) => {
+    const timeVal = `${pad2(s.hour)}:${pad2(s.minute)}`;
+    const classes = [
+      'fno-slot-pill',
+      'fno-slot-editable',
+      s.completed_today ? 'completed' : '',
+      !s.enabled ? 'disabled' : '',
+    ].filter(Boolean).join(' ');
+
+    return `
+      <div class="${classes}" data-idx="${idx}">
+        <div class="fno-slot-top">
+          <label class="fno-slot-toggle" title="Enable/Disable this scheduled fetch">
+            <input type="checkbox" class="fno-slot-enabled" data-idx="${idx}" ${s.enabled ? 'checked' : ''} />
+            <span class="fno-slot-code">${s.slot}${s.completed_today ? ' ✓' : ''}</span>
+          </label>
+          <button type="button" class="fno-slot-remove" data-idx="${idx}" title="Remove slot">✕</button>
+        </div>
+        <input type="time" class="fno-slot-time" data-idx="${idx}" value="${timeVal}" />
+      </div>
+    `;
+  }).join('');
+
+  const saveBtn = document.getElementById('btn-fno-save-schedule');
+  if (saveBtn) {
+    saveBtn.textContent = fnoScheduleDirty ? 'Save Schedule *' : 'Save Schedule';
+  }
+}
+
+function handleFnoSlotInput(e) {
+  const idx = Number(e.target?.dataset?.idx);
+  if (Number.isNaN(idx) || !fnoScheduleDraft[idx]) return;
+
+  if (e.target.classList.contains('fno-slot-enabled')) {
+    fnoScheduleDraft[idx].enabled = e.target.checked;
+    fnoScheduleDirty = true;
+    renderFnoScheduleEditor();
+    return;
+  }
+
+  if (e.target.classList.contains('fno-slot-time')) {
+    const [hh, mm] = (e.target.value || '10:00').split(':').map(Number);
+    if (!Number.isNaN(hh) && !Number.isNaN(mm)) {
+      fnoScheduleDraft[idx].hour = hh;
+      fnoScheduleDraft[idx].minute = mm;
+      const candidate = formatSlotCodeFromTime(hh, mm);
+      const duplicate = fnoScheduleDraft.some((item, i) => i !== idx && item.slot === candidate);
+      fnoScheduleDraft[idx].slot = duplicate ? `${candidate}_${idx + 1}` : candidate;
+      fnoScheduleDirty = true;
+      renderFnoScheduleEditor();
+    }
+  }
+}
+
+function addFnoScheduleSlot() {
+  let newHour = 11;
+  let newMin = 30;
+  const used = new Set(fnoScheduleDraft.map(s => `${s.hour}:${s.minute}`));
+  while (used.has(`${newHour}:${newMin}`) && newHour < 15) {
+    newHour += 1;
+  }
+  const code = formatSlotCodeFromTime(newHour, newMin);
+  const uniqueCode = fnoScheduleDraft.some(s => s.slot === code) ? `${code}_${fnoScheduleDraft.length + 1}` : code;
+  fnoScheduleDraft.push({
+    slot: uniqueCode,
+    label: 'Custom',
+    hour: newHour,
+    minute: newMin,
+    enabled: true,
+    completed_today: false,
+  });
+  fnoScheduleDirty = true;
+  renderFnoScheduleEditor();
+}
+
+async function saveFnoSchedule() {
+  try {
+    const res = await fetch('/api/fno/schedule', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slots: fnoScheduleDraft.map(s => ({
+          slot: s.slot,
+          label: s.label || s.slot,
+          hour: Number(s.hour),
+          minute: Number(s.minute),
+          enabled: Boolean(s.enabled),
+        })),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Failed to save schedule');
+    fnoScheduleDirty = false;
+    fnoStatusData = data.status;
+    renderFnoStatus(fnoStatusData);
+    showToast(data.message || 'IST schedule saved.');
+  } catch (err) {
+    showToast(`Schedule error: ${err.message}`);
+  }
+}
+
 

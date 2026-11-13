@@ -9,6 +9,7 @@ Tables:
 """
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -18,26 +19,34 @@ from config import BASE_DIR
 
 FNO_DB_FILE = BASE_DIR / "fno_market_data.db"
 
+DEFAULT_SCHEDULE_SLOTS = [
+    {"slot": "10AM", "label": "Morning", "hour": 10, "minute": 0, "enabled": True},
+    {"slot": "1PM", "label": "Afternoon", "hour": 13, "minute": 0, "enabled": True},
+    {"slot": "3PM", "label": "Evening", "hour": 15, "minute": 0, "enabled": True},
+]
+
 
 class FnoDatabase:
     def __init__(self, db_path: Path = FNO_DB_FILE):
         self.db_path = db_path
+        self._lock = threading.RLock()
         self._init_schema()
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
-        conn = sqlite3.connect(str(self.db_path), timeout=30.0, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        with self._lock:
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
     def _init_schema(self) -> None:
         with self._connect() as conn:
@@ -131,8 +140,29 @@ class FnoDatabase:
                     message TEXT,
                     error_details TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS schedule_slots (
+                    slot TEXT PRIMARY KEY,
+                    label TEXT NOT NULL,
+                    hour INTEGER NOT NULL,
+                    minute INTEGER NOT NULL,
+                    enabled INTEGER DEFAULT 1,
+                    sort_order INTEGER DEFAULT 0
+                );
                 """
             )
+            existing_slots = conn.execute("SELECT COUNT(*) FROM schedule_slots").fetchone()[0]
+            if existing_slots == 0:
+                conn.executemany(
+                    """
+                    INSERT INTO schedule_slots (slot, label, hour, minute, enabled, sort_order)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (s["slot"], s["label"], s["hour"], s["minute"], 1 if s["enabled"] else 0, idx)
+                        for idx, s in enumerate(DEFAULT_SCHEDULE_SLOTS)
+                    ],
+                )
             extra_cols = [
                 ("sma50", "REAL"),
                 ("sma200", "REAL"),
@@ -562,6 +592,49 @@ class FnoDatabase:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    # ── Configurable Schedule Slots ───────────────────────────────────────
+    def get_schedule_slots(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT slot, label, hour, minute, enabled
+                FROM schedule_slots
+                ORDER BY hour ASC, minute ASC, sort_order ASC
+                """
+            ).fetchall()
+        return [
+            {
+                "slot": r["slot"],
+                "label": r["label"],
+                "hour": int(r["hour"]),
+                "minute": int(r["minute"]),
+                "enabled": bool(r["enabled"]),
+            }
+            for r in rows
+        ]
+
+    def save_schedule_slots(self, slots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM schedule_slots;")
+            conn.executemany(
+                """
+                INSERT INTO schedule_slots (slot, label, hour, minute, enabled, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        str(s["slot"]).strip().upper(),
+                        str(s.get("label") or s["slot"]).strip(),
+                        int(s["hour"]),
+                        int(s["minute"]),
+                        1 if s.get("enabled", True) else 0,
+                        idx,
+                    )
+                    for idx, s in enumerate(slots)
+                ],
+            )
+        return self.get_schedule_slots()
 
 
 fno_db = FnoDatabase()

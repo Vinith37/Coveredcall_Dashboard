@@ -42,8 +42,20 @@ CSV_HEADERS = [
 
 
 class FnoFetchRequest(BaseModel):
-    mode: str = "snapshot"  # 'snapshot' | 'incremental' | 'historical'
-    slot: str = "MANUAL"    # 'MANUAL' | '10AM' | '1PM' | '3PM'
+    mode: str = "snapshot"  # 'snapshot' | 'incremental' | 'historical' | 'simultaneous'
+    slot: str = "MANUAL"    # 'MANUAL' or configured schedule slot code
+
+
+class ScheduleSlotItem(BaseModel):
+    slot: str
+    label: str = ""
+    hour: int
+    minute: int
+    enabled: bool = True
+
+
+class FnoScheduleUpdateRequest(BaseModel):
+    slots: List[ScheduleSlotItem]
 
 
 def _csv_val(v: Any) -> Any:
@@ -109,15 +121,51 @@ def refresh_fno_universe():
 def trigger_fno_fetch(req: FnoFetchRequest):
     mode = req.mode.lower().strip()
     slot = req.slot.upper().strip()
-    if mode not in ("snapshot", "incremental", "historical"):
-        raise HTTPException(status_code=400, detail="Invalid mode. Must be 'snapshot', 'incremental', or 'historical'.")
-    if slot not in ("MANUAL", "10AM", "1PM", "3PM"):
-        raise HTTPException(status_code=400, detail="Invalid slot. Must be 'MANUAL', '10AM', '1PM', or '3PM'.")
+    if mode not in ("snapshot", "incremental", "historical", "simultaneous"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mode. Must be 'snapshot', 'incremental', 'historical', or 'simultaneous'.",
+        )
+    valid_slots = {"MANUAL", "10AM", "1PM", "3PM"} | {s["slot"].upper() for s in fno_db.get_schedule_slots()}
+    if slot not in valid_slots:
+        raise HTTPException(status_code=400, detail=f"Invalid slot '{slot}'.")
 
     started, msg = fno_fetcher.trigger_async_job(mode=mode, slot=slot)
     if not started:
         return JSONResponse(status_code=409, content={"success": False, "message": msg})
     return JSONResponse(content={"success": True, "message": msg})
+
+
+@router.put("/schedule")
+def update_fno_schedule(req: FnoScheduleUpdateRequest):
+    if not req.slots:
+        raise HTTPException(status_code=400, detail="At least one schedule slot is required.")
+
+    cleaned: List[Dict[str, Any]] = []
+    seen_codes = set()
+    for item in req.slots:
+        code = item.slot.strip().upper().replace(" ", "_")
+        if not code:
+            raise HTTPException(status_code=400, detail="Slot code cannot be empty.")
+        if code in seen_codes:
+            raise HTTPException(status_code=400, detail=f"Duplicate slot code '{code}'.")
+        if not (0 <= item.hour <= 23 and 0 <= item.minute <= 59):
+            raise HTTPException(status_code=400, detail=f"Invalid time {item.hour:02d}:{item.minute:02d} for slot '{code}'.")
+        seen_codes.add(code)
+        cleaned.append({
+            "slot": code,
+            "label": (item.label or code).strip(),
+            "hour": int(item.hour),
+            "minute": int(item.minute),
+            "enabled": bool(item.enabled),
+        })
+
+    saved = fno_db.save_schedule_slots(cleaned)
+    return JSONResponse(content={
+        "success": True,
+        "message": f"Saved {len(saved)} IST schedule slot(s).",
+        "status": fno_fetcher.get_status_payload(),
+    })
 
 
 @router.get("/stocks")
