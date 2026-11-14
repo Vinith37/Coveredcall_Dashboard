@@ -58,8 +58,8 @@ SCHEDULE_SLOTS = [
     ("3PM", 15, 0, "Evening (3:00 PM IST)"),
 ]
 
-HISTORICAL_MONTHS = 30
-HISTORICAL_DAYS = 915  # ~30 months
+HISTORICAL_MONTHS = 120
+HISTORICAL_DAYS = 3660  # ~120 months (10 years)
 HIST_RATE_LIMIT_DELAY = 0.36  # ~2.7 req/sec (Kite historical API limit is 3 req/sec)
 
 
@@ -474,10 +474,15 @@ class FnoDataFetcher:
         cutoff_dt = end_dt - timedelta(days=HISTORICAL_DAYS)
 
         last_date = None if full_refresh else fno_db.get_last_candle_date(symbol)
+        first_date = None if full_refresh else fno_db.get_first_candle_date(symbol)
         existing_tail: List[Dict[str, Any]] = []
 
+        # If DB only has the legacy 30-month window, expand back to 120 months automatically
+        thirty_mo_cutoff = (end_dt - timedelta(days=950)).strftime("%Y-%m-%d")
+        needs_120m_expansion = bool(first_date and first_date > thirty_mo_cutoff)
+
         needs_recompute = False
-        if last_date and not full_refresh:
+        if last_date and not full_refresh and not needs_120m_expansion:
             last_dt = datetime.strptime(last_date, "%Y-%m-%d").replace(tzinfo=IST)
             # Fetch a 7-day overlap so updated/incomplete candles are cleanly refreshed
             from_dt = max(cutoff_dt, last_dt - timedelta(days=7))
@@ -833,7 +838,8 @@ class FnoDataFetcher:
         "1M": 30,
         "6M": 180,
         "1Y": 365,
-        "30M": 900,
+        "30M": 915,
+        "120M": 3660,
     }
 
     @staticmethod

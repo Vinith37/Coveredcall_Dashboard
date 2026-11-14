@@ -230,6 +230,14 @@ class FnoDatabase:
             ).fetchone()
         return row["max_date"] if row and row["max_date"] else None
 
+    def get_first_candle_date(self, symbol: str) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MIN(date) AS min_date FROM historical_candles WHERE symbol = ?",
+                (symbol,),
+            ).fetchone()
+        return row["min_date"] if row and row["min_date"] else None
+
     _METRIC_COLS = (
         "sma20, sma50, sma200, trend, rs_value, rs_rating, rs_signal, "
         "vol20, rvol, breakout_50d, accumulation, momentum_score, rsi14, volatility, extra_indicators"
